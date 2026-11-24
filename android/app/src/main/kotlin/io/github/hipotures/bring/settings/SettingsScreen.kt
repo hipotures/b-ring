@@ -69,7 +69,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     val message by vm.message.collectAsStateWithLifecycle()
     val dark by context.bring.prefs.darkTheme.collectAsStateWithLifecycle()
     var offload by remember { mutableStateOf(context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)) }
-    var customDir by rememberSaveable { mutableStateOf("") }
+    var picking by rememberSaveable { mutableStateOf(false) }
     var confirmForget by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { vm.clearMessage() } }
 
@@ -146,27 +146,26 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                 if (storage) StorageAccess.suggestions().map { it.path }.filter { it !in watched } else emptyList()
             }
             if (suggestions.isNotEmpty()) {
-                Text("ADD", style = MetaStyle, color = BringTheme.colors.dim)
+                Text("QUICK ADD", style = MetaStyle, color = BringTheme.colors.dim)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     suggestions.forEach { path ->
                         SharpButton("+ ${path.substringAfterLast('/')}", onClick = { vm.addFolder(path) })
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(
-                    value = customDir,
-                    onValueChange = { customDir = it },
-                    label = { Text("Other folder (absolute path)") },
-                    singleLine = true,
-                    shape = Sharp,
-                    textStyle = MetaStyle,
-                    modifier = Modifier.weight(1f),
+            SharpButton(
+                "Choose folder…",
+                enabled = storage,
+                primary = true,
+                onClick = { picking = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (!storage) {
+                Text(
+                    "Grant all-files access above to pick folders.",
+                    style = MetaStyle,
+                    color = BringTheme.colors.dim,
                 )
-                SharpButton("Add", enabled = customDir.startsWith("/"), onClick = {
-                    vm.addFolder(customDir.trim())
-                    customDir = ""
-                })
             }
         }
 
@@ -203,6 +202,17 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
         }
 
         Text(versionLine(context), style = MetaStyle, color = BringTheme.colors.dim)
+    }
+
+    if (picking) {
+        FolderPicker(
+            watched = folders.map { it.localDir }.toSet(),
+            onPick = {
+                picking = false
+                vm.addFolder(it)
+            },
+            onDismiss = { picking = false },
+        )
     }
 
     if (confirmForget) {

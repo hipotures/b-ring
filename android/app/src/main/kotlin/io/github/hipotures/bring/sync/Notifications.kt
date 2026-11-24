@@ -27,7 +27,10 @@ object Notifications {
         )
     }
 
-    fun sync(context: Context, path: String?, sent: Long, total: Long): Notification {
+    /** One progress report: the current file and the round's totals. */
+    data class Upload(val path: String, val sent: Long, val total: Long, val files: Int, val bytes: Long)
+
+    fun sync(context: Context, upload: Upload?): Notification {
         val open = PendingIntent.getActivity(
             context,
             0,
@@ -36,24 +39,23 @@ object Notifications {
         )
         val b = NotificationCompat.Builder(context, CHANNEL_SYNC)
             .setSmallIcon(R.drawable.ic_stat_sync)
-            .setContentTitle(if (path == null) "Syncing with the Ring" else "Uploading")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setContentIntent(open)
-        if (path != null && total > 0) {
-            val pct = (sent * 100 / total).toInt()
-            b.setContentText("${path.substringAfterLast('/')} · ${formatBytes(sent)} / ${formatBytes(total)}")
-                .setProgress(100, pct, false)
+        if (upload == null) {
+            b.setContentTitle("Syncing with the Ring").setProgress(0, 0, true)
         } else {
-            b.setProgress(0, 0, true)
+            b.setContentTitle("Uploading · ${upload.files} files · ${formatBytes(upload.bytes)}")
+                .setContentText(upload.path.substringAfterLast('/'))
+            if (upload.total > 0) b.setProgress(100, (upload.sent * 100 / upload.total).toInt(), false)
         }
         return b.build()
     }
 
-    fun syncForeground(context: Context, path: String?, sent: Long, total: Long) = ForegroundInfo(
+    fun syncForeground(context: Context, upload: Upload?) = ForegroundInfo(
         ID_SYNC,
-        sync(context, path, sent, total),
+        sync(context, upload),
         ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
     )
 }

@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
-        Notifications.syncForeground(applicationContext, null, 0, 0)
+        Notifications.syncForeground(applicationContext, null)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val bring = applicationContext.bring
@@ -85,21 +85,43 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         KEY_REMAINING to r.outbox.remaining.toInt(),
     )
 
-    /** Upload progress → WorkManager progress + the foreground notification. */
+    /**
+     * Upload progress → WorkManager progress + the foreground notification,
+     * at most once a second: with many small files the engine reports
+     * hundreds of files per second, far too fast to read.
+     */
     private inner class Progress : TransferListener {
-        @Volatile private var lastAt = 0L
+        private var lastAt = 0L
+        private var current: String? = null
+        private var currentSent = 0L
+        private var doneBytes = 0L
+        private var files = 0
         private val nm = applicationContext.getSystemService(NotificationManager::class.java)
 
+        @Synchronized
         override fun onUploadProgress(ringPath: String, sentBytes: ULong, totalBytes: ULong) {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastAt < 500 && sentBytes < totalBytes) return
-            lastAt = now
             val sent = sentBytes.toLong()
             val total = totalBytes.toLong()
-            setProgressAsync(workDataOf(KEY_PATH to ringPath, KEY_SENT to sent, KEY_TOTAL to total))
-            runCatching {
-                nm.notify(Notifications.ID_SYNC, Notifications.sync(applicationContext, ringPath, sent, total))
+            if (ringPath != current) {
+                doneBytes += currentSent
+                current = ringPath
+                files++
             }
+            currentSent = sent
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastAt < 1_000) return
+            lastAt = now
+            val p = Notifications.Upload(ringPath, sent, total, files, doneBytes + sent)
+            setProgressAsync(
+                workDataOf(
+                    KEY_PATH to p.path,
+                    KEY_SENT to p.sent,
+                    KEY_TOTAL to p.total,
+                    KEY_FILES to p.files,
+                    KEY_BYTES to p.bytes,
+                ),
+            )
+            runCatching { nm.notify(Notifications.ID_SYNC, Notifications.sync(applicationContext, p)) }
         }
     }
 
@@ -109,6 +131,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         const val KEY_PATH = "path"
         const val KEY_SENT = "sent"
         const val KEY_TOTAL = "total"
+        /** Files whose upload started in this round (the current one included). */
+        const val KEY_FILES = "files"
+        /** Bytes sent in this round, all files together. */
+        const val KEY_BYTES = "bytes"
         const val KEY_ERROR = "error"
         const val KEY_RECEIVED = "received"
         const val KEY_UPLOADED = "uploaded"

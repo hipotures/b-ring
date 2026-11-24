@@ -2,6 +2,7 @@ package io.github.hipotures.bring
 
 import android.app.Application
 import android.net.ConnectivityManager
+import android.os.SystemClock
 import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
@@ -36,6 +37,10 @@ data class SyncUi(
     val path: String? = null,
     val sent: Long = 0,
     val total: Long = 0,
+    /** Files uploaded or uploading in this round. */
+    val files: Int = 0,
+    /** Bytes sent in this round, all files together. */
+    val bytes: Long = 0,
 )
 
 /** App-wide state: pairing, route, sync, storage and watched folders. */
@@ -102,6 +107,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch { trackRounds() }
         viewModelScope.launch { syncFinished.collect { loadEntries() } }
+        // During a long round, reload the list as uploads move on (at most
+        // every 3 s), so files turn SYNCED without waiting for the end.
+        viewModelScope.launch {
+            var lastAt = 0L
+            sync.map { it.path }.distinctUntilChanged().collect { path ->
+                val now = SystemClock.elapsedRealtime()
+                if (path != null && now - lastAt > 3_000) {
+                    lastAt = now
+                    loadEntries()
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -264,6 +281,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             path = p?.getString(SyncWorker.KEY_PATH),
             sent = p?.getLong(SyncWorker.KEY_SENT, 0) ?: 0,
             total = p?.getLong(SyncWorker.KEY_TOTAL, 0) ?: 0,
+            files = p?.getInt(SyncWorker.KEY_FILES, 0) ?: 0,
+            bytes = p?.getLong(SyncWorker.KEY_BYTES, 0) ?: 0,
         )
     }
 }
