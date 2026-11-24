@@ -1,15 +1,13 @@
 package io.github.hipotures.bring
 
-import kotlinx.coroutines.withContext
-import java.io.File
-import android.widget.Toast
-import android.media.MediaScannerConnection
 import android.app.Application
+import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
-import android.os.SystemClock
-import android.util.Log
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.SystemClock
+import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -20,11 +18,11 @@ import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.VerifyReport
 import io.github.hipotures.bring.ffi.WatchedFolder
 import io.github.hipotures.bring.storage.StorageAccess
-import io.github.hipotures.bring.ui.ThemeChoice
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncScheduler
 import io.github.hipotures.bring.sync.SyncWorker
 import io.github.hipotures.bring.sync.onUnmeteredWifi
+import io.github.hipotures.bring.ui.ThemeChoice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -41,11 +39,15 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 /** What the status bar shows about sync. */
 data class SyncUi(
     val running: Boolean = false,
+    val ringId: String? = null,
+    val ringName: String? = null,
     val path: String? = null,
     val sent: Long = 0,
     val total: Long = 0,
@@ -55,7 +57,7 @@ data class SyncUi(
     val bytes: Long = 0,
 )
 
-/** App-wide state: pairing, route, sync, storage and watched folders. */
+/** App-wide state: multi-Ring pairing, routes, sync, storage and watched folders. */
 @OptIn(FlowPreview::class)
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val bring = app.bring
@@ -64,13 +66,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     sealed interface Pairing {
         data object Loading : Pairing
         data object Unpaired : Pairing
-        data class Paired(val ring: RingInfo) : Pairing
+        data class Paired(val rings: List<RingInfo>, val activeRingId: String) : Pairing {
+            val active: RingInfo get() = rings.firstOrNull { it.ringId == activeRingId } ?: rings.first()
+        }
     }
 
     private val _pairing = MutableStateFlow<Pairing>(Pairing.Loading)
     val pairing: StateFlow<Pairing> = _pairing.asStateFlow()
 
-    val route: StateFlow<RouteStatus> = bring.route.asStateFlow()
+    val routes: StateFlow<Map<String, RouteStatus>> = bring.routes.asStateFlow()
+
+    /** Route status of the currently selected Ring. */
+    val route: StateFlow<RouteStatus> = combine(_pairing, routes) { p, map ->
+        val id = (p as? Pairing.Paired)?.activeRingId ?: return@combine RouteStatus.UNKNOWN
+        map[id] ?: RouteStatus.UNKNOWN
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, RouteStatus.UNKNOWN)
 
     private val _storageGranted = MutableStateFlow(StorageAccess.granted())
     val storageGranted: StateFlow<Boolean> = _storageGranted.asStateFlow()
@@ -79,7 +89,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val folders: StateFlow<List<WatchedFolder>> = _folders.asStateFlow()
 
     private val _entries = MutableStateFlow<List<Entry>>(emptyList())
-    /** Every entry the Moon knows (local, synced and remote-only). */
+    /** Every entry the Moon knows for the currently selected Ring. */
     val entries: StateFlow<List<Entry>> = _entries.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
@@ -130,7 +140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         app.getSystemService(ConnectivityManager::class.java)
             ?.registerDefaultNetworkCallback(networkCallback)
         viewModelScope.launch {
-            networkChanged.debounce(1_000).collect { probeRoute() }
+            networkChanged.debounce(1_000).collect { probeAllRoutes() }
         }
         viewModelScope.launch { trackRounds() }
         viewModelScope.launch { syncFinished.collect { loadEntries() } }
@@ -152,21 +162,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ?.unregisterNetworkCallback(networkCallback)
     }
 
+    private fun activeRingId(): String? = (_pairing.value as? Pairing.Paired)?.activeRingId
+
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            val ring = runCatching { bring.moon.ring() }.getOrNull()
-            // Without its token (e.g. Keystore reset) the Moon must pair again;
-            // re-pairing with the same Ring keeps the index.
-            if (ring != null && bring.tokens.load() != null) {
-                _pairing.value = Pairing.Paired(ring)
+            val all = runCatching { bring.moon.rings() }.getOrDefault(emptyList())
+            if (all.size == 1) {
+                bring.tokens.migrateLegacy(all.first().ringId)?.let {
+                    bring.moon.setRingToken(all.first().ringId, it)
+                }
+            }
+            val valid = all.filter { r ->
+                val tok = bring.tokens.load(r.ringId)
+                if (tok != null) bring.moon.setRingToken(r.ringId, tok)
+                tok != null
+            }
+            if (valid.isNotEmpty()) {
+                val chosen = bring.prefs.selectedRingId?.takeIf { id -> valid.any { it.ringId == id } }
+                    ?: valid.first().ringId
+                bring.prefs.selectedRingId = chosen
+                _pairing.value = Pairing.Paired(valid, chosen)
                 SyncScheduler.schedulePeriodic(getApplication())
                 SyncScheduler.watchMedia(getApplication())
-                loadFolders()
-                loadEntries()
-                probeRoute()
+                loadFolders(chosen)
+                loadEntries(chosen)
+                probeAllRoutes()
             } else {
                 _pairing.value = Pairing.Unpaired
+                _folders.value = emptyList()
+                _entries.value = emptyList()
             }
+        }
+    }
+
+    /** Switches the active Ring across Browser and Settings. */
+    fun selectRing(ringId: String) {
+        val current = _pairing.value as? Pairing.Paired ?: return
+        if (current.activeRingId == ringId) return
+        if (current.rings.none { it.ringId == ringId }) return
+        bring.prefs.selectedRingId = ringId
+        _pairing.value = current.copy(activeRingId = ringId)
+        _verify.value = VerifyState.Idle
+        _message.value = null
+        loadFolders(ringId)
+        loadEntries(ringId)
+        if ((bring.routes.value[ringId] ?: RouteStatus.UNKNOWN) == RouteStatus.UNKNOWN) {
+            probeRoute(ringId)
         }
     }
 
@@ -176,8 +217,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_pairing.value is Pairing.Paired) {
             networkChanged.tryEmit(Unit)
             loadEntries()
-            // Opening the app means "show me the current state": check now
-            // unless a round just ended (LAN only, as in the background).
             if (System.currentTimeMillis() - bring.syncLog.lastChecked.value > 60_000) {
                 SyncScheduler.syncSoon(getApplication())
             }
@@ -185,66 +224,97 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onPaired(ring: RingInfo) {
-        _pairing.value = Pairing.Paired(ring)
-        SyncScheduler.schedulePeriodic(getApplication())
-        SyncScheduler.watchMedia(getApplication())
-        // First listing of the Ring right away, over whichever route works.
-        SyncScheduler.syncNow(getApplication())
-        probeRoute()
-    }
-
-    fun loadEntries() {
         viewModelScope.launch(Dispatchers.IO) {
-            if (_pairing.value !is Pairing.Paired) return@launch
-            runCatching { bring.moon.entries(null) }.onSuccess { _entries.value = it }
+            val all = runCatching { bring.moon.rings() }.getOrDefault(listOf(ring))
+                .filter { bring.tokens.load(it.ringId) != null }
+            val list = all.ifEmpty { listOf(ring) }
+            bring.prefs.selectedRingId = ring.ringId
+            _pairing.value = Pairing.Paired(list, ring.ringId)
+            _verify.value = VerifyState.Idle
+            SyncScheduler.schedulePeriodic(getApplication())
+            SyncScheduler.watchMedia(getApplication())
+            loadFolders(ring.ringId)
+            loadEntries(ring.ringId)
+            // First listing of the newly paired Ring right away, over whichever route works.
+            SyncScheduler.syncNow(getApplication(), ringId = ring.ringId)
+            probeRoute(ring.ringId)
         }
     }
 
-    private fun probeRoute() {
+    fun renameRing(ringId: String, name: String) = action {
+        val updated = bring.moon.renameRing(ringId, name)
+        val cur = _pairing.value as? Pairing.Paired
+        if (cur != null) {
+            _pairing.value = cur.copy(
+                rings = cur.rings.map { if (it.ringId == ringId) updated else it },
+            )
+        }
+        null
+    }
+
+    fun loadEntries(ringId: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = ringId ?: activeRingId() ?: return@launch
+            runCatching { bring.moon.entriesFor(id, null) }.onSuccess { list ->
+                if (activeRingId() == id) _entries.value = list
+            }
+        }
+    }
+
+    private fun probeAllRoutes() {
+        val rings = (_pairing.value as? Pairing.Paired)?.rings ?: return
+        rings.forEach { probeRoute(it.ringId) }
+    }
+
+    private fun probeRoute(ringId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             if (_pairing.value !is Pairing.Paired) return@launch
             val wifi = getApplication<Application>().onUnmeteredWifi()
             val t0 = SystemClock.elapsedRealtime()
-            val result = runCatching { RouteStatus.of(bring.moon.selectRoute(wifi)) }
-            Log.i(TAG, "route: unmeteredWifi=$wifi -> $result in ${SystemClock.elapsedRealtime() - t0} ms")
-            bring.route.value = result.getOrDefault(RouteStatus.OFFLINE)
+            val result = runCatching { RouteStatus.of(bring.moon.selectRouteFor(ringId, wifi)) }
+            Log.i(TAG, "route[$ringId]: unmeteredWifi=$wifi -> $result in ${SystemClock.elapsedRealtime() - t0} ms")
+            bring.setRoute(ringId, result.getOrDefault(RouteStatus.OFFLINE))
         }
     }
 
     fun recheckRoute() {
-        bring.route.value = RouteStatus.UNKNOWN
-        probeRoute()
+        val id = activeRingId() ?: return
+        bring.setRoute(id, RouteStatus.UNKNOWN)
+        probeRoute(id)
     }
 
     fun syncNow() {
         _syncError.value = null
-        SyncScheduler.syncNow(getApplication())
+        SyncScheduler.syncNow(getApplication(), ringId = activeRingId())
     }
 
     /**
-     * Full check & repair: asks the Ring to rescan missing hashes/thumbnails,
-     * re-reads the Ring index from seq 0, rescans watched folders, clears
-     * empty cached thumbnails and retries any queued uploads.
+     * Full check & repair for the active Ring: asks the Ring to rescan missing
+     * hashes/thumbnails, re-reads the Ring index from seq 0, rescans watched
+     * folders, clears empty cached thumbnails and retries queued uploads.
      */
     fun verifySync() {
         if (_verify.value is VerifyState.Running) return
+        val id = activeRingId() ?: return
         _verify.value = VerifyState.Running
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             _verify.value = try {
                 bring.syncMutex.withLock {
-                    val route = bring.moon.selectRoute(app.onUnmeteredWifi())
-                    bring.route.value = RouteStatus.of(route)
+                    val route = bring.moon.selectRouteFor(id, app.onUnmeteredWifi())
+                    bring.setRoute(id, RouteStatus.of(route))
                     if (route == null) {
                         VerifyState.Failed("Ring unreachable")
                     } else {
                         File(app.cacheDir, "thumbs").listFiles()
                             ?.filter { it.isFile && it.length() == 0L }
                             ?.forEach { it.delete() }
-                        val r = bring.moon.verifySync()
+                        val r = bring.moon.verifySyncFor(id)
                         SingletonImageLoader.get(app).memoryCache?.clear()
-                        runCatching { bring.moon.entries(null) }.onSuccess { _entries.value = it }
-                        if (r.queued > 0u) SyncScheduler.syncNow(app)
+                        runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
+                            if (activeRingId() == id) _entries.value = it
+                        }
+                        if (r.queued > 0u) SyncScheduler.syncNow(app, ringId = id)
                         VerifyState.Done(
                             summary = formatVerifyReport(r),
                             warning = r.missingThumbs > 0u || r.queued > 0u,
@@ -274,8 +344,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Detects the end of each round from state transitions seen in this
      * session: a one-time request reaching a final state, or the periodic
-     * request going from RUNNING back to ENQUEUED. Old finished requests
-     * still in WorkManager's history are ignored.
+     * request going from RUNNING back to ENQUEUED.
      */
     private suspend fun trackRounds() {
         val active = mutableSetOf<UUID>()
@@ -305,7 +374,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Deletes the local copies of synced files; they stay on the Ring and
-     * become remote-only. The gallery forgets the deleted paths.
+     * become remote-only. Skips files another Ring still needs to upload.
      */
     fun freeLocal(files: List<Entry>) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -316,7 +385,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 buildString {
                     val n = r.freed.toInt()
                     append("Removed $n ${if (n == 1) "file" else "files"} from the phone (${formatBytes(r.freedBytes)})")
-                    if (r.skipped > 0u) append(" · ${r.skipped} skipped: changed or not synced")
+                    if (r.skipped > 0u) append(" · ${r.skipped} skipped: changed, pending or needed by another Ring")
                 }
             } catch (e: Exception) {
                 e.describe()
@@ -330,39 +399,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         wm.cancelUniqueWork(SyncScheduler.MANUAL)
     }
 
-    private fun loadFolders() {
-        _folders.value = runCatching { bring.moon.watchedFolders() }.getOrDefault(emptyList())
+    private fun loadFolders(ringId: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = ringId ?: activeRingId() ?: return@launch
+            val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
+            if (activeRingId() == id) _folders.value = list
+        }
     }
 
     fun addFolder(localDir: String) = action {
-        bring.moon.addWatchedFolder(localDir, null)
-        loadFolders()
+        val id = activeRingId() ?: return@action null
+        bring.moon.addWatchedFolderFor(id, localDir, null)
+        val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
+        if (activeRingId() == id) _folders.value = list
         "Watching $localDir"
     }
 
-    fun removeFolder(id: Long) = action {
-        bring.moon.removeWatchedFolder(id)
-        loadFolders()
+    fun removeFolder(folderId: Long) = action {
+        val id = activeRingId() ?: return@action null
+        bring.moon.removeWatchedFolder(folderId)
+        val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
+        if (activeRingId() == id) _folders.value = list
         null
     }
 
     fun setOffloadThreshold(bytes: ULong) = action {
-        bring.prefs.offloadThresholdBytes = bytes
-        bring.moon.setOffloadThreshold(bytes)
+        val id = activeRingId() ?: return@action null
+        bring.moon.setRingOffloadThreshold(id, bytes)
+        val cur = _pairing.value as? Pairing.Paired
+        if (cur != null) {
+            _pairing.value = cur.copy(
+                rings = cur.rings.map { if (it.ringId == id) it.copy(offloadThresholdBytes = bytes) else it },
+            )
+        }
         null
     }
 
     fun setTheme(choice: ThemeChoice) = bring.prefs.setTheme(choice)
 
-    /** Forgets the Ring and its index; local files are not touched. */
-    fun forget() = action {
-        SyncScheduler.cancelAll(getApplication())
-        bring.moon.forgetRing()
-        bring.tokens.clear()
-        bring.route.value = RouteStatus.UNKNOWN
-        _folders.value = emptyList()
-        _entries.value = emptyList()
-        _pairing.value = Pairing.Unpaired
+    /** Forgets the given Ring and its index; other Rings and local files are untouched. */
+    fun forget(ringId: String) = action {
+        bring.moon.forgetRingById(ringId)
+        bring.tokens.remove(ringId)
+        bring.removeRoute(ringId)
+        val remaining = runCatching { bring.moon.rings() }.getOrDefault(emptyList())
+            .filter { bring.tokens.load(it.ringId) != null }
+        if (remaining.isEmpty()) {
+            SyncScheduler.cancelAll(getApplication())
+            bring.prefs.selectedRingId = null
+            _folders.value = emptyList()
+            _entries.value = emptyList()
+            _pairing.value = Pairing.Unpaired
+        } else {
+            val next = remaining.first().ringId
+            bring.prefs.selectedRingId = next
+            _pairing.value = Pairing.Paired(remaining, next)
+            _verify.value = VerifyState.Idle
+            loadFolders(next)
+            loadEntries(next)
+        }
         null
     }
 
@@ -388,6 +483,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val p = active?.progress
         return SyncUi(
             running = active != null,
+            ringId = p?.getString(SyncWorker.KEY_RING_ID),
+            ringName = p?.getString(SyncWorker.KEY_RING_NAME),
             path = p?.getString(SyncWorker.KEY_PATH),
             sent = p?.getLong(SyncWorker.KEY_SENT, 0) ?: 0,
             total = p?.getLong(SyncWorker.KEY_TOTAL, 0) ?: 0,

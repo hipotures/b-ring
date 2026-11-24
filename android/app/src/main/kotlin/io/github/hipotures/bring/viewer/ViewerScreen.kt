@@ -105,7 +105,7 @@ fun ViewerScreen(entryId: Long, route: RouteStatus, uploading: String? = null) {
     Column(Modifier.fillMaxSize()) {
         when {
             kind == MediaKind.IMAGE && playable -> Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
-                ZoomableImage(local ?: RingImage(e.remoteFileId!!, e.blake3, e.size), onDoubleTap = { details = !details })
+                ZoomableImage(local ?: RingImage(e.ringId, e.remoteFileId!!, e.blake3, e.size), onDoubleTap = { details = !details })
             }
             (kind == MediaKind.VIDEO || kind == MediaKind.AUDIO) && playable ->
                 Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) { MediaPlayer(e, local) }
@@ -249,7 +249,7 @@ private fun InfoBar(
                         SharpButton("External player", onClick = {
                             scope.launch {
                                 message = try {
-                                    val url = withContext(Dispatchers.IO) { context.bring.moon.streamUrl(fileId) }
+                                    val url = withContext(Dispatchers.IO) { context.bring.moon.streamUrlFor(e.ringId, fileId) }
                                     openUrl(context, url, e.mime)
                                 } catch (ex: Exception) {
                                     ex.describe()

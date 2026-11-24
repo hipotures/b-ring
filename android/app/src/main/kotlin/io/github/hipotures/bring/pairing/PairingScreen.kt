@@ -51,6 +51,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     val state by vm.state.collectAsStateWithLifecycle()
     var code by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf(Build.MODEL ?: "moon") }
+    var ringLabel by rememberSaveable { mutableStateOf("") }
     val valid = remember(code) { code.isNotBlank() && isValidPairingCode(code) }
 
     // Plain ZXing (no Google Play Services). Devices without a usable camera
@@ -60,7 +61,11 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     }
 
     LaunchedEffect(state) {
-        (state as? PairState.Done)?.let { onPaired(it.ring) }
+        (state as? PairState.Done)?.let {
+            val ring = it.ring
+            vm.reset()
+            onPaired(ring)
+        }
     }
 
     Column(
@@ -126,11 +131,20 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Panel(title = "2. This device") {
+                Panel(title = "2. Names") {
+                    OutlinedTextField(
+                        value = ringLabel,
+                        onValueChange = { ringLabel = it },
+                        label = { Text("Custom name for this Ring (optional)") },
+                        placeholder = { Text("e.g. Videos, Screenshots, NAS") },
+                        singleLine = true,
+                        colors = tmFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Name shown on the Ring") },
+                        label = { Text("This device's name on the Ring") },
                         singleLine = true,
                         colors = tmFieldColors(),
                         modifier = Modifier.fillMaxWidth(),
@@ -139,7 +153,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                 if (s is PairState.Failed) ErrorLine(s.message)
                 SharpButton(
                     "Pair",
-                    onClick = { vm.start(code, name) },
+                    onClick = { vm.start(code, name, ringLabel) },
                     enabled = valid,
                     primary = true,
                     modifier = Modifier.fillMaxWidth(),

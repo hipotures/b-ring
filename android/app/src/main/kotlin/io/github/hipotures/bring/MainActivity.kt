@@ -33,6 +33,7 @@ import io.github.hipotures.bring.home.SetupPanel
 import io.github.hipotures.bring.pairing.PairingScreen
 import io.github.hipotures.bring.settings.SettingsScreen
 import io.github.hipotures.bring.ui.BringTheme
+import io.github.hipotures.bring.ui.RingSwitcher
 import io.github.hipotures.bring.ui.TopStrip
 import io.github.hipotures.bring.viewer.ViewerScreen
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -77,7 +78,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, VIEW, SETTINGS, ACTIVITY }
+private enum class Screen { HOME, VIEW, SETTINGS, ACTIVITY, ADD_RING }
 
 @Composable
 private fun App(openActivity: MutableStateFlow<Boolean>, vm: AppViewModel = viewModel()) {
@@ -96,6 +97,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
     var dir by rememberSaveable { mutableStateOf("") }
     var viewing by rememberSaveable { mutableStateOf<Long?>(null) }
     val route by vm.route.collectAsStateWithLifecycle()
+    val routes by vm.routes.collectAsStateWithLifecycle()
     val sync by vm.sync.collectAsStateWithLifecycle()
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
@@ -103,6 +105,8 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
     val rounds by vm.rounds.collectAsStateWithLifecycle()
     val lastChecked by vm.lastChecked.collectAsStateWithLifecycle()
     val wantActivity by openActivity.collectAsStateWithLifecycle()
+    val active = p.active
+    val multiRing = p.rings.size > 1
     LaunchedEffect(wantActivity) {
         if (wantActivity) {
             screen = Screen.ACTIVITY
@@ -112,6 +116,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
 
     BackHandler(enabled = screen != Screen.HOME || dir.isNotEmpty()) {
         when {
+            screen == Screen.ADD_RING -> screen = Screen.SETTINGS
             screen != Screen.HOME -> screen = Screen.HOME
             else -> dir = parentOf(dir)
         }
@@ -120,8 +125,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
         when (screen) {
             Screen.HOME -> {
                 TopStrip(
-                    // The path is in the breadcrumbs right below.
-                    title = "B-Ring",
+                    title = if (multiRing) active.name else "B-Ring",
                     route = route,
                     sync = sync,
                     onBack = if (dir.isEmpty()) null else ({ dir = parentOf(dir) }),
@@ -131,7 +135,14 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     lastRound = rounds.firstOrNull(),
                     lastChecked = lastChecked,
                     queued = entries.count { it.uploadPending },
+                    multiRing = multiRing,
                 )
+                if (multiRing) {
+                    RingSwitcher(p.rings, p.activeRingId, routes) { id ->
+                        vm.selectRing(id)
+                        dir = ""
+                    }
+                }
                 BrowserScreen(
                     entries = entries,
                     dir = dir,
@@ -143,13 +154,19 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     header = {
                         SetupPanel(storage, folders.size, onOpenSettings = { screen = Screen.SETTINGS })
                     },
-                    uploading = sync.path.takeIf { sync.running },
+                    uploading = sync.path.takeIf { sync.running && sync.ringId == active.ringId },
                     onFreeLocal = vm::freeLocal,
                 )
             }
             Screen.VIEW -> {
                 TopStrip("", route, sync, onBack = { screen = Screen.HOME })
-                viewing?.let { ViewerScreen(it, route, uploading = sync.path.takeIf { sync.running }) }
+                viewing?.let {
+                    ViewerScreen(
+                        it,
+                        route,
+                        uploading = sync.path.takeIf { sync.running && sync.ringId == active.ringId },
+                    )
+                }
             }
             Screen.ACTIVITY -> {
                 TopStrip("Sync activity", route, sync, onBack = { screen = Screen.HOME })
@@ -157,7 +174,20 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
             }
             Screen.SETTINGS -> {
                 TopStrip("Settings", route, sync, onBack = { screen = Screen.HOME })
-                SettingsScreen(p.ring, vm)
+                SettingsScreen(
+                    rings = p.rings,
+                    ring = active,
+                    vm = vm,
+                    onAddRing = { screen = Screen.ADD_RING },
+                )
+            }
+            Screen.ADD_RING -> {
+                TopStrip("Add Ring", route, sync, onBack = { screen = Screen.SETTINGS })
+                PairingScreen(onPaired = {
+                    vm.onPaired(it)
+                    dir = ""
+                    screen = Screen.HOME
+                })
             }
         }
     }

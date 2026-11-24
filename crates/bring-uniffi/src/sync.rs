@@ -156,12 +156,58 @@ pub(crate) fn local_stat(path: &Path) -> io::Result<Option<LocalStat>> {
     }
 }
 
+/// True if any *other* paired Ring still needs `local_path` on disk — either
+/// because it tracks it as unverified/pending, or because it watches a folder
+/// containing `local_path` and has not verified this exact `(size, mtime_ns)` yet.
+pub(crate) fn other_ring_needs_local_file(
+    c: &Connection,
+    ring_db_id: i64,
+    local_path: &str,
+    verified: LocalStat,
+) -> Result<bool, MoonError> {
+    let explicit_pending: bool = c.query_row(
+        "SELECT EXISTS (
+            SELECT 1 FROM entries e
+            LEFT JOIN outbox o ON o.entry_id = e.id
+            WHERE e.ring_id != ?1 AND e.local_path = ?2
+              AND (o.entry_id IS NOT NULL
+                   OR (e.state = 'local-only' AND e.suppressed = 0)
+                   OR e.size != ?3 OR e.mtime_ns != ?4)
+        )",
+        params![ring_db_id, local_path, verified.size, verified.mtime_ns],
+        |r| r.get(0),
+    )?;
+    if explicit_pending {
+        return Ok(true);
+    }
+    let p = Path::new(local_path);
+    for (other_ring_id, dir) in store::other_rings_watched_dirs(c, ring_db_id)? {
+        if !p.starts_with(Path::new(&dir)) {
+            continue;
+        }
+        let other = store::entry_by_local_path(c, other_ring_id, local_path)?;
+        let covered = match other {
+            None => false,
+            Some(e) => {
+                e.suppressed
+                    || (matches!(e.state, FileState::Synced | FileState::RemoteOnly)
+                        && e.size == verified.size
+                        && e.mtime_ns == verified.mtime_ns)
+            }
+        };
+        if !covered {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Deletes the local copies of `synced` entries, which become `remote-only`
 /// (the same rule as offload, §3.5 step 5, chosen by the user). Only an
 /// entry the Ring holds verified bytes for qualifies, and only while the
-/// local file still has the size and mtime that were verified; anything
-/// else is skipped. Database first, then the delete; the Ring is never
-/// touched (Moon cannot delete Ring files at all).
+/// local file still has the size and mtime that were verified and no other
+/// Ring still needs to upload it; anything else is skipped. Database first,
+/// then the delete; the Ring is never touched.
 pub(crate) fn free_local(c: &mut Connection, ids: &[i64]) -> Result<FreeReport, MoonError> {
     let mut report = FreeReport::default();
     for &id in ids {
@@ -175,6 +221,7 @@ pub(crate) fn free_local(c: &mut Connection, ids: &[i64]) -> Result<FreeReport, 
         let target = row.and_then(
             |r| match (r.state, r.local_path, r.remote_file_id, r.blake3) {
                 (FileState::Synced, Some(local), Some(_), Some(_)) if !pending => Some((
+                    r.ring_id,
                     local,
                     LocalStat {
                         size: r.size,
@@ -184,19 +231,24 @@ pub(crate) fn free_local(c: &mut Connection, ids: &[i64]) -> Result<FreeReport, 
                 _ => None,
             },
         );
-        let Some((local, verified)) = target else {
+        let Some((ring_db_id, local, verified)) = target else {
             report.skipped += 1;
             continue;
         };
         let path = Path::new(&local);
-        if local_stat(path)? != Some(verified) {
-            // Edited or gone: the next scan sorts it out.
+        if local_stat(path)? != Some(verified)
+            || other_ring_needs_local_file(&tx, ring_db_id, &local, verified)?
+        {
+            // Edited, gone, or another Ring still needs to upload it.
             report.skipped += 1;
             continue;
         }
         tx.execute(
-            "UPDATE entries SET state = 'remote-only', local_path = NULL WHERE id = ?1",
-            [id],
+            "UPDATE entries SET state = 'remote-only', local_path = NULL
+             WHERE id = ?1
+                OR (local_path = ?2 AND state = 'synced' AND size = ?3 AND mtime_ns = ?4
+                    AND NOT EXISTS (SELECT 1 FROM outbox WHERE entry_id = entries.id))",
+            params![id, local, verified.size, verified.mtime_ns],
         )?;
         tx.commit()?;
         // Last check right before deleting; if it was touched in between,
@@ -263,9 +315,10 @@ fn is_under(path: &str, dir: &Path) -> bool {
     Path::new(path).starts_with(dir)
 }
 
-/// Applies a scan of the watched folders to the index (§5.2, §5.3).
+/// Applies a scan of the watched folders for one Ring to its index (§5.2, §5.3).
 pub(crate) fn apply_scan(
     c: &mut Connection,
+    ring_db_id: i64,
     folders: &[WatchedFolder],
 ) -> Result<ScanReport, MoonError> {
     let mut report = ScanReport::default();
@@ -291,7 +344,7 @@ pub(crate) fn apply_scan(
                 continue;
             };
             seen.insert(file.local.clone());
-            if let Some(r) = store::entry_by_local_path(&tx, &file.local)? {
+            if let Some(r) = store::entry_by_local_path(&tx, ring_db_id, &file.local)? {
                 if (r.size, r.mtime_ns) == (file.stat.size, file.stat.mtime_ns) {
                     continue;
                 }
@@ -307,10 +360,11 @@ pub(crate) fn apply_scan(
                 )?;
                 continue;
             }
-            match store::entry_by_ring_path(&tx, ring_path.as_str())? {
+            match store::entry_by_ring_path(&tx, ring_db_id, ring_path.as_str())? {
                 None => {
                     store::insert_local(
                         &tx,
+                        ring_db_id,
                         ring_path.as_str(),
                         &file.local,
                         file.stat.size,
@@ -337,11 +391,13 @@ pub(crate) fn apply_scan(
         }
     }
 
-    // Tracked local files that disappeared (§5.2).
+    // Tracked local files for this Ring that disappeared (§5.2).
     let tracked: Vec<(i64, String, FileState)> = {
-        let mut stmt =
-            tx.prepare("SELECT id, local_path, state FROM entries WHERE local_path IS NOT NULL")?;
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        let mut stmt = tx.prepare(
+            "SELECT id, local_path, state FROM entries
+             WHERE ring_id = ?1 AND local_path IS NOT NULL",
+        )?;
+        stmt.query_map([ring_db_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<Result<_, _>>()?
     };
     for (id, local, state) in tracked {
@@ -373,10 +429,14 @@ pub(crate) fn apply_scan(
 // Delta sync
 // ---------------------------------------------------------------------------
 
-/// Applies one index entry from the Ring. True when it brings a file this
+/// Applies one index entry from a Ring. True when it brings a file this
 /// device did not know (or new content for a remote-only one).
-pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<bool, MoonError> {
-    let row = store::entry_by_ring_path(c, e.path.as_str())?;
+pub(crate) fn apply_index_entry(
+    c: &Connection,
+    ring_db_id: i64,
+    e: &IndexEntry,
+) -> Result<bool, MoonError> {
+    let row = store::entry_by_ring_path(c, ring_db_id, e.path.as_str())?;
     if e.deleted {
         let Some(r) = row else { return Ok(false) };
         if r.remote_file_id != Some(e.id) {
@@ -407,10 +467,19 @@ pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<bool, 
     match row {
         None => {
             c.execute(
-                "INSERT INTO entries (ring_path, remote_file_id, size, mtime_ns, mime, blake3,
-                   thumb_blake3, state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'remote-only')",
-                params![e.path, e.id, e.size, e.mtime_ns, e.mime, e.blake3, e.thumb],
+                "INSERT INTO entries (ring_id, ring_path, remote_file_id, size, mtime_ns, mime,
+                   blake3, thumb_blake3, state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'remote-only')",
+                params![
+                    ring_db_id,
+                    e.path,
+                    e.id,
+                    e.size,
+                    e.mtime_ns,
+                    e.mime,
+                    e.blake3,
+                    e.thumb
+                ],
             )?;
         }
         Some(r) => match r.state {
@@ -487,7 +556,7 @@ impl Moon {
                 let mut db = self.db();
                 let tx = db.transaction()?;
                 for e in &page.entries {
-                    if apply_index_entry(&tx, e)? {
+                    if apply_index_entry(&tx, s.ring.id, e)? {
                         report.received += 1;
                     }
                 }
@@ -501,19 +570,20 @@ impl Moon {
         }
     }
 
-    pub(crate) fn scan_local_inner(&self) -> Result<ScanReport, MoonError> {
-        let folders = store::watched_folders(&self.db())?;
-        apply_scan(&mut self.db(), &folders)
+    pub(crate) fn scan_local_inner(&self, ring_db_id: i64) -> Result<ScanReport, MoonError> {
+        let folders = store::watched_folders(&self.db(), ring_db_id)?;
+        apply_scan(&mut self.db(), ring_db_id, &folders)
     }
 
     /// Hash-first (§3.5 step 0): every pending `local-only` entry gets a full
     /// BLAKE3 and a size/mtime snapshot before anything is sent.
-    fn prepare_outbox(&self) -> Result<(), MoonError> {
+    fn prepare_outbox(&self, ring_db_id: i64) -> Result<(), MoonError> {
         let todo: Vec<EntryRow> = {
             let db = self.db();
             let mut stmt = db.prepare(&format!(
                 "SELECT {} FROM entries e LEFT JOIN outbox o ON o.entry_id = e.id
-                 WHERE e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL
+                 WHERE e.ring_id = ?1
+                   AND e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL
                    AND (o.entry_id IS NULL OR e.blake3 IS NULL
                         OR o.hashed_size != e.size OR o.hashed_mtime_ns != e.mtime_ns)",
                 store::ENTRY_COLS
@@ -522,7 +592,7 @@ impl Moon {
                     .collect::<Vec<_>>()
                     .join(", ")
             ))?;
-            stmt.query_map([], store::entry_from_row)?
+            stmt.query_map([ring_db_id], store::entry_from_row)?
                 .collect::<Result<_, _>>()?
         };
         for entry in todo {
@@ -555,18 +625,19 @@ impl Moon {
         Ok(())
     }
 
-    fn due_jobs(&self, now: i64) -> Result<Vec<Job>, MoonError> {
+    fn due_jobs(&self, ring_db_id: i64, now: i64) -> Result<Vec<Job>, MoonError> {
         let db = self.db();
         let ids: Vec<i64> = {
             let mut stmt = db.prepare(
                 "SELECT o.entry_id FROM outbox o JOIN entries e ON e.id = o.entry_id
-                 WHERE e.state = 'local-only' AND e.suppressed = 0 AND e.blake3 IS NOT NULL
+                 WHERE e.ring_id = ?1
+                   AND e.state = 'local-only' AND e.suppressed = 0 AND e.blake3 IS NOT NULL
                    AND e.local_path IS NOT NULL
                    AND o.hashed_size = e.size AND o.hashed_mtime_ns = e.mtime_ns
-                   AND (o.next_try_at IS NULL OR o.next_try_at <= ?1)
+                   AND (o.next_try_at IS NULL OR o.next_try_at <= ?2)
                  ORDER BY o.attempts, e.size",
             )?;
-            stmt.query_map([now], |r| r.get(0))?
+            stmt.query_map(params![ring_db_id, now], |r| r.get(0))?
                 .collect::<Result<_, _>>()?
         };
         let mut jobs = Vec::with_capacity(ids.len());
@@ -606,8 +677,8 @@ impl Moon {
         s: &Session,
         listener: Option<&Arc<dyn TransferListener>>,
     ) -> Result<(OutboxReport, Vec<i64>), MoonError> {
-        self.prepare_outbox()?;
-        let jobs = self.due_jobs(now_secs())?;
+        self.prepare_outbox(s.ring.id)?;
+        let jobs = self.due_jobs(s.ring.id, now_secs())?;
         let mut report = OutboxReport::default();
         let mut uploaded_ids = Vec::new();
         for (idx, job) in jobs.iter().enumerate() {
@@ -641,9 +712,11 @@ impl Moon {
                 }
             }
         }
-        report.remaining = self
-            .db()
-            .query_row("SELECT COUNT(*) FROM outbox", [], |r| r.get(0))?;
+        report.remaining = self.db().query_row(
+            "SELECT COUNT(*) FROM outbox o JOIN entries e ON e.id = o.entry_id WHERE e.ring_id = ?1",
+            [s.ring.id],
+            |r| r.get(0),
+        )?;
         Ok((report, uploaded_ids))
     }
 
@@ -661,13 +734,18 @@ impl Moon {
         !self.cancel.load(Ordering::Relaxed)
     }
 
-    fn count_missing_thumbs(&self, ids: Option<&[i64]>) -> Result<u32, MoonError> {
+    fn count_missing_thumbs(
+        &self,
+        ring_db_id: i64,
+        ids: Option<&[i64]>,
+    ) -> Result<u32, MoonError> {
         let db = self.db();
         let mut missing = 0u32;
         match ids {
             Some(ids) => {
                 for &id in ids {
                     if let Some(e) = store::entry_by_id(&db, id)?
+                        && e.ring_id == ring_db_id
                         && e.state != FileState::LocalOnly
                         && e.thumb.is_none()
                         && looks_thumbable(e.mime.as_deref(), &e.ring_path)
@@ -679,9 +757,9 @@ impl Moon {
             None => {
                 let mut stmt = db.prepare(
                     "SELECT mime, ring_path FROM entries
-                     WHERE state != 'local-only' AND thumb_blake3 IS NULL",
+                     WHERE ring_id = ?1 AND state != 'local-only' AND thumb_blake3 IS NULL",
                 )?;
-                let rows = stmt.query_map([], |r| {
+                let rows = stmt.query_map([ring_db_id], |r| {
                     Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
                 })?;
                 for row in rows {
@@ -708,7 +786,11 @@ impl Moon {
             return;
         }
         for _ in 0..2 {
-            if self.count_missing_thumbs(Some(uploaded_ids)).unwrap_or(0) == 0 {
+            if self
+                .count_missing_thumbs(s.ring.id, Some(uploaded_ids))
+                .unwrap_or(0)
+                == 0
+            {
                 return;
             }
             if !self
@@ -727,9 +809,9 @@ impl Moon {
         }
     }
 
-    /// Full consistency check: ask the Ring to rescan for missing hashes or
-    /// thumbnails, rewind the cursor to 0 and re-read the whole index, rescan
-    /// watched folders, and clear retry backoff for queued uploads.
+    /// Full consistency check for one Ring: ask the Ring to rescan for missing
+    /// hashes or thumbnails, rewind the cursor to 0 and re-read the whole index,
+    /// rescan watched folders, and clear retry backoff for queued uploads.
     pub(crate) async fn verify_sync_inner(&self, s: &Session) -> Result<VerifyReport, MoonError> {
         let ring_queued = match s.json::<RescanResponse>(s.post("/rescan")).await {
             Ok(r) => r.queued,
@@ -743,24 +825,33 @@ impl Moon {
         }
         let had_thumb: HashSet<i64> = {
             let db = self.db();
-            let mut stmt = db.prepare("SELECT id FROM entries WHERE thumb_blake3 IS NOT NULL")?;
-            stmt.query_map([], |r| r.get(0))?
+            let mut stmt = db.prepare(
+                "SELECT id FROM entries WHERE ring_id = ?1 AND thumb_blake3 IS NOT NULL",
+            )?;
+            stmt.query_map([s.ring.id], |r| r.get(0))?
                 .collect::<Result<_, _>>()?
         };
         store::set_cursor(&self.db(), s.ring.id, 0)?;
         self.sync_index_inner(s).await?;
-        let scan = self.scan_local_inner()?;
+        let scan = self.scan_local_inner(s.ring.id)?;
         let (total_entries, thumbs_updated, queued, retried) = {
             let db = self.db();
             let retried = db.execute(
-                "UPDATE outbox SET next_try_at = NULL WHERE next_try_at IS NOT NULL",
-                [],
+                "UPDATE outbox SET next_try_at = NULL
+                 WHERE next_try_at IS NOT NULL
+                   AND entry_id IN (SELECT id FROM entries WHERE ring_id = ?1)",
+                [s.ring.id],
             )? as u32;
-            let total_entries: u32 =
-                db.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
-            let mut stmt = db.prepare("SELECT id FROM entries WHERE thumb_blake3 IS NOT NULL")?;
+            let total_entries: u32 = db.query_row(
+                "SELECT COUNT(*) FROM entries WHERE ring_id = ?1",
+                [s.ring.id],
+                |r| r.get(0),
+            )?;
+            let mut stmt = db.prepare(
+                "SELECT id FROM entries WHERE ring_id = ?1 AND thumb_blake3 IS NOT NULL",
+            )?;
             let now_thumb: Vec<i64> = stmt
-                .query_map([], |r| r.get(0))?
+                .query_map([s.ring.id], |r| r.get(0))?
                 .collect::<Result<_, _>>()?;
             let thumbs_updated = now_thumb
                 .into_iter()
@@ -769,14 +860,15 @@ impl Moon {
             let queued: u32 = db.query_row(
                 "SELECT COUNT(*) FROM entries e
                  LEFT JOIN outbox o ON o.entry_id = e.id
-                 WHERE o.entry_id IS NOT NULL
-                    OR (e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL)",
-                [],
+                 WHERE e.ring_id = ?1
+                   AND (o.entry_id IS NOT NULL
+                        OR (e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL))",
+                [s.ring.id],
                 |r| r.get(0),
             )?;
             (total_entries, thumbs_updated, queued, retried)
         };
-        let missing_thumbs = self.count_missing_thumbs(None)?;
+        let missing_thumbs = self.count_missing_thumbs(s.ring.id, None)?;
         Ok(VerifyReport {
             total_entries,
             thumbs_updated,
@@ -948,8 +1040,8 @@ impl Moon {
     fn apply_ack(&self, s: &Session, job: &Job, ack: &UploadAck) -> Result<Decision, MoonError> {
         let path = Path::new(&job.local);
         let current = local_stat(path)?;
-        let decision = offload::decide(
-            &self.policy(),
+        let mut decision = offload::decide(
+            &self.policy_for(&s.ring),
             &job.snapshot,
             Some(&VerifiedAck {
                 blake3: ack.blake3,
@@ -960,6 +1052,21 @@ impl Moon {
         let id = job.entry.id;
         let mut db = self.db();
         let tx = db.transaction()?;
+        // Multi-Ring safety: never delete a local file while another Ring
+        // watching this path still needs to upload it.
+        if decision == Decision::Offload
+            && other_ring_needs_local_file(
+                &tx,
+                s.ring.id,
+                &job.local,
+                LocalStat {
+                    size: job.snapshot.size,
+                    mtime_ns: job.snapshot.mtime_ns,
+                },
+            )?
+        {
+            decision = Decision::KeepSynced;
+        }
         match decision {
             Decision::Retry(reason) => {
                 tx.execute(
@@ -983,12 +1090,15 @@ impl Moon {
             Decision::Offload | Decision::KeepSynced | Decision::LocalGone => {
                 // An index sync may already have listed our new file.
                 tx.execute(
-                    "DELETE FROM entries WHERE ring_path = ?1 AND id != ?2 AND state = 'remote-only'",
-                    params![ack.path, id],
+                    "DELETE FROM entries
+                     WHERE ring_id = ?1 AND ring_path = ?2 AND id != ?3 AND state = 'remote-only'",
+                    params![s.ring.id, ack.path, id],
                 )?;
                 let path_free: bool = tx.query_row(
-                    "SELECT NOT EXISTS (SELECT 1 FROM entries WHERE ring_path = ?1 AND id != ?2)",
-                    params![ack.path, id],
+                    "SELECT NOT EXISTS (
+                         SELECT 1 FROM entries WHERE ring_id = ?1 AND ring_path = ?2 AND id != ?3
+                     )",
+                    params![s.ring.id, ack.path, id],
                     |r| r.get(0),
                 )?;
                 let ring_path = if path_free {
@@ -1019,6 +1129,17 @@ impl Moon {
                         id
                     ],
                 )?;
+                if decision.may_delete_local() {
+                    // Other Rings that already verified this exact local copy
+                    // also transition to remote-only once it is deleted.
+                    tx.execute(
+                        "UPDATE entries SET state = 'remote-only', local_path = NULL
+                         WHERE ring_id != ?1 AND local_path = ?2 AND state = 'synced'
+                           AND size = ?3 AND mtime_ns = ?4
+                           AND NOT EXISTS (SELECT 1 FROM outbox WHERE entry_id = entries.id)",
+                        params![s.ring.id, job.local, job.snapshot.size, job.snapshot.mtime_ns],
+                    )?;
+                }
                 tx.execute("DELETE FROM outbox WHERE entry_id = ?1", [id])?;
             }
         }

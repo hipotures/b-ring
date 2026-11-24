@@ -17,6 +17,7 @@ import io.github.hipotures.bring.sync.Notifications
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncLog
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import java.io.File
 
@@ -26,8 +27,16 @@ class BringApp : Application(), SingletonImageLoader.Factory {
     /** Finished sync rounds, for the activity screen. */
     val syncLog: SyncLog by lazy { SyncLog(filesDir.resolve("sync-log.tsv")) }
 
-    /** Last route the engine selected (UI and worker both update it). */
-    val route = MutableStateFlow(RouteStatus.UNKNOWN)
+    /** Last route selected per Ring (`ringId` → [RouteStatus]). */
+    val routes = MutableStateFlow<Map<String, RouteStatus>>(emptyMap())
+
+    fun setRoute(ringId: String, status: RouteStatus) {
+        routes.update { it + (ringId to status) }
+    }
+
+    fun removeRoute(ringId: String) {
+        routes.update { it - ringId }
+    }
 
     /** Serialises SyncWorker rounds and Settings verification so workers never fight over FGS/progress/cancel. */
     val syncMutex = Mutex()
@@ -41,8 +50,14 @@ class BringApp : Application(), SingletonImageLoader.Factory {
      */
     val moon: Moon by lazy {
         Moon.open(File(filesDir, "moon.db").path).also { m ->
-            tokens.load()?.let(m::setDeviceToken)
             prefs.offloadThresholdBytes?.let(m::setOffloadThreshold)
+            val rings = runCatching { m.rings() }.getOrDefault(emptyList())
+            if (rings.size == 1) {
+                tokens.migrateLegacy(rings.first().ringId)
+            }
+            for (r in rings) {
+                tokens.load(r.ringId)?.let { tok -> m.setRingToken(r.ringId, tok) }
+            }
         }
     }
 

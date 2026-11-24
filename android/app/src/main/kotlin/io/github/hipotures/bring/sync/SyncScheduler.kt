@@ -77,10 +77,16 @@ object SyncScheduler {
      * A user-started round, allowed over any network (WAN included).
      * [queueAfter] chains it after a running round instead of dropping it,
      * so freshly shared files go out in the next pass.
+     * [ringId] limits the pass to one Ring when set; null syncs all Rings.
      */
-    fun syncNow(context: Context, queueAfter: Boolean = false) {
+    fun syncNow(context: Context, queueAfter: Boolean = false, ringId: String? = null) {
+        val data = if (ringId != null) {
+            workDataOf(SyncWorker.KEY_MANUAL to true, SyncWorker.KEY_RING_ID to ringId)
+        } else {
+            workDataOf(SyncWorker.KEY_MANUAL to true)
+        }
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setInputData(workDataOf(SyncWorker.KEY_MANUAL to true))
+            .setInputData(data)
             .setConstraints(
                 Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
             )

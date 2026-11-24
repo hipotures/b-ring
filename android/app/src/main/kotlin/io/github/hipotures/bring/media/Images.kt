@@ -22,13 +22,13 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 
 /** A Ring thumbnail (`thumb` BLAKE3), fetched through the engine's pinned client. */
-data class RingThumb(val hash: String)
+data class RingThumb(val ringId: String, val hash: String)
 
 /** A local video file's thumbnail, extracted on-device before a Ring thumb exists. */
 data class LocalVideoThumb(val path: String, val mtimeNs: Long)
 
 /** A whole Ring file, for full-screen images. */
-data class RingImage(val fileId: Long, val blake3: String?, val size: ULong)
+data class RingImage(val ringId: String, val fileId: Long, val blake3: String?, val size: ULong)
 
 /**
  * Thumbnails are immutable (content-addressed), so they are cached on disk
@@ -45,7 +45,7 @@ class RingThumbFetcher(
         val source = if (file.isFile) {
             DataSource.DISK
         } else {
-            val bytes = moon().thumbnail(data.hash)
+            val bytes = moon().thumbnailFor(data.ringId, data.hash)
             val tmp = File(dir, "${data.hash}.tmp")
             tmp.writeBytes(bytes)
             tmp.renameTo(file)
@@ -62,7 +62,7 @@ class RingThumbFetcher(
 
 class RingImageFetcher(private val moon: () -> Moon, private val data: RingImage, private val options: Options) : Fetcher {
     override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {
-        val bytes = moon().readRange(data.fileId, 0u, data.size)
+        val bytes = moon().readRangeFor(data.ringId, data.fileId, 0u, data.size)
         SourceFetchResult(ImageSource(Buffer().write(bytes), options.fileSystem), null, DataSource.NETWORK)
     }
 
@@ -78,7 +78,7 @@ object RingThumbKeyer : Keyer<RingThumb> {
 
 object RingImageKeyer : Keyer<RingImage> {
     override fun key(data: RingImage, options: Options) =
-        "ring:${data.fileId}:${data.blake3.orEmpty()}"
+        "ring:${data.ringId}:${data.fileId}:${data.blake3.orEmpty()}"
 }
 
 class LocalVideoThumbFetcher(

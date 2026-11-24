@@ -152,7 +152,7 @@ private fun codecName(codecs: String?, mime: String?): String? {
 private fun source(context: Context, entry: Entry, local: File?): Pair<DataSource.Factory, Uri> {
     if (local != null) return DefaultDataSource.Factory(context) to Uri.fromFile(local)
     val fileId = entry.remoteFileId ?: error("this file is not on the Ring")
-    val ms = context.bring.moon.mediaSource(fileId)
+    val ms = context.bring.moon.mediaSourceFor(entry.ringId, fileId)
     val http = OkHttpDataSource.Factory(PinnedTls.client(ms.tlsCertSha256))
         .setDefaultRequestProperties(mapOf("Authorization" to ms.authorization))
     return http to ms.url.toUri()

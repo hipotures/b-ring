@@ -114,6 +114,7 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
         Text(roundDetail(r), style = MaterialTheme.typography.bodyMedium, color = if (r.error != null) c.danger else c.text2)
         Text(
                 listOfNotNull(
+                    r.ringName.ifEmpty { null },
                     formatWhen(r.endedAt),
                     r.route.ifEmpty { null },
                     if (r.manual) "manual" else "background",

@@ -78,18 +78,12 @@ impl Moon {
         device_name: &str,
     ) -> Result<PairingSas, MoonError> {
         let payload = BootstrapPayload::from_text(code)?;
-        let existing = store::ring(&self.db())?;
-        // Re-pairing keeps the device identity, so the Ring keeps its slug.
-        let device_uuid = match &existing {
-            Some(r) => r.device_uuid,
-            None => random_uuid()?,
-        };
         let verifier = Arc::new(RecordingVerifier::default());
         let http = client::recording(verifier.clone())?;
         let base = payload.lan_url();
         let pairing_id = payload.pairing_id.to_hex();
 
-        let verified = self.rt.block_on(async {
+        let (verified, device_uuid) = self.rt.block_on(async {
             let health: HealthResponse = client::json(
                 http.get(format!("{base}/api/v1/health"))
                     .timeout(Duration::from_secs(5)),
@@ -97,20 +91,18 @@ impl Moon {
             .await?;
             let ring_id: [u8; 16] = hex_decode(&health.ring_id)
                 .ok_or_else(|| MoonError::invalid("bad ring_id from /health"))?;
-            if let Some(r) = &existing
-                && r.ring_id != ring_id
-            {
-                return Err(MoonError::invalid(
-                    "already paired with another Ring; forget it first",
-                ));
-            }
+            // Re-pairing the same Ring keeps its device UUID (and slug); a new Ring gets a fresh UUID.
+            let device_uuid = match store::ring_by_hex(&self.db(), &health.ring_id)? {
+                Some(existing) => existing.device_uuid,
+                None => random_uuid()?,
+            };
             let (hs, req) = MoonHandshake::start(&payload, ring_id, device_uuid, device_name)?;
             let url = |step: &str| format!("{base}/api/v1/pair/{pairing_id}/{step}");
             let resp: PairExchangeResponse =
                 client::json(http.post(url("exchange")).json(&req)).await?;
             let verified = hs.finish(&resp)?;
             client::send(http.post(url("confirm")).json(&verified.confirm_request())).await?;
-            Ok::<_, MoonError>(verified)
+            Ok::<_, MoonError>((verified, device_uuid))
         })?;
 
         let sas = PairingSas {
@@ -178,7 +170,10 @@ impl Moon {
             })?;
         let result = pending.verified.open_result(&sealed, &observed)?;
         let row = store::save_ring(&self.db(), &result, pending.device_uuid)?;
-        *self.token.lock().expect("token lock") = Some(result.device_token.clone());
+        self.tokens
+            .lock()
+            .expect("tokens lock")
+            .insert(row.ring_id_hex(), result.device_token.clone());
         Ok(PairedRing {
             device_token: result.device_token,
             ring: RingInfo::from(&row),

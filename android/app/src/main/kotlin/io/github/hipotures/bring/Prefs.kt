@@ -25,14 +25,20 @@ class Prefs(context: Context) {
         _theme.value = choice
     }
 
-    /** User-chosen offload threshold, or null for the engine default. */
+    /** User-chosen fallback offload threshold, or null for the engine default. */
     var offloadThresholdBytes: ULong?
         get() = if (sp.contains(OFFLOAD)) sp.getLong(OFFLOAD, 0).toULong() else null
         set(v) = sp.edit { if (v == null) remove(OFFLOAD) else putLong(OFFLOAD, v.toLong()) }
+
+    /** Last selected Ring in the UI (hex ring_id). */
+    var selectedRingId: String?
+        get() = sp.getString(SELECTED_RING, null)
+        set(v) = sp.edit { if (v == null) remove(SELECTED_RING) else putString(SELECTED_RING, v) }
 
     private companion object {
         const val THEME = "theme"
         const val LEGACY_DARK = "dark_theme" // before The Mechanics
         const val OFFLOAD = "offload_threshold"
+        const val SELECTED_RING = "selected_ring_id"
     }
 }

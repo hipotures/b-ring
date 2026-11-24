@@ -1,17 +1,20 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
@@ -29,6 +32,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.SyncUi
+import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
 import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.RouteStatus
@@ -37,15 +41,70 @@ import io.github.hipotures.bring.sync.roundTitle
 import themechanics.compose.Tm
 import themechanics.compose.TmDimens
 
+/** Route → status mark. */
+fun routeMark(route: RouteStatus): PlateMark = when (route) {
+    RouteStatus.LAN, RouteStatus.WAN -> PlateMark.ACTIVE
+    RouteStatus.OFFLINE -> PlateMark.WARNING
+    RouteStatus.UNKNOWN -> PlateMark.PENDING
+}
+
 /** The route as a status plate: connected is a quiet dot, offline warns. */
 @Composable
 fun RoutePlate(route: RouteStatus, small: Boolean = true) {
-    val mark = when (route) {
-        RouteStatus.LAN, RouteStatus.WAN -> PlateMark.ACTIVE
-        RouteStatus.OFFLINE -> PlateMark.WARNING
-        RouteStatus.UNKNOWN -> PlateMark.PENDING
+    StatusPlate(route.label, routeMark(route), small = small)
+}
+
+/**
+ * Horizontal switcher for paired Rings (shown when 2+ Rings are paired):
+ * each chip shows the Ring's custom name and live route dot.
+ */
+@Composable
+fun RingSwitcher(
+    rings: List<RingInfo>,
+    activeRingId: String,
+    routes: Map<String, RouteStatus>,
+    onSelect: (String) -> Unit,
+) {
+    val c = Tm.colors
+    Column(Modifier.fillMaxWidth().background(c.chrome)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = TmDimens.space3, vertical = TmDimens.space1_5),
+            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            rings.forEach { ring ->
+                val selected = ring.ringId == activeRingId
+                val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
+                Row(
+                    Modifier
+                        .border(
+                            if (selected) TmDimens.bwControl else TmDimens.bw2,
+                            if (selected) c.ink else c.line2,
+                            ControlShape,
+                        )
+                        .background(if (selected) c.selectBg else c.surface, ControlShape)
+                        .clickable { onSelect(ring.ringId) }
+                        .heightIn(min = TmDimens.controlSm)
+                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
+                ) {
+                    PlateMarkIcon(routeMark(r), 12.dp)
+                    Text(
+                        ring.name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
     }
-    StatusPlate(route.label, mark, small = small)
 }
 
 /**
@@ -66,6 +125,7 @@ fun TopStrip(
     lastRound: SyncRound? = null,
     lastChecked: Long = 0L,
     queued: Int = 0,
+    multiRing: Boolean = false,
 ) {
     val c = Tm.colors
     Column(Modifier.fillMaxWidth().background(c.chrome)) {
@@ -90,7 +150,7 @@ fun TopStrip(
         }
         when {
             onSync == null -> {}
-            sync.running -> ActiveSync(sync, onActivity)
+            sync.running -> ActiveSync(sync, multiRing, onActivity)
             queued > 0 && lastRound?.error == null -> QueuedStatus(queued, lastChecked, onActivity)
             // A later check found nothing new: say that, not the old news.
             lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
@@ -115,8 +175,9 @@ fun ActionIcon(icon: ImageVector, description: String, onClick: () -> Unit, enab
 
 /** [● Uploading]  42% · 1.2 GiB — same fixed-height row, so nothing below jumps. */
 @Composable
-private fun ActiveSync(sync: SyncUi, onClick: (() -> Unit)?) {
-    val label = if (sync.path != null) "Uploading" else "Syncing"
+private fun ActiveSync(sync: SyncUi, multiRing: Boolean, onClick: (() -> Unit)?) {
+    val base = if (sync.path != null) "Uploading" else "Syncing"
+    val label = if (multiRing && !sync.ringName.isNullOrBlank()) "$base · ${sync.ringName}" else base
     val detail = when {
         sync.path == null -> ""
         sync.total > 0 -> "${(sync.sent * 100 / sync.total).coerceIn(0, 100)}% · ${formatBytes(sync.bytes)}"

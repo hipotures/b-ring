@@ -7,6 +7,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -15,30 +18,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.Icon
-import io.github.hipotures.bring.ui.ActionIcon
-import io.github.hipotures.bring.ui.FolderGlyph
-import io.github.hipotures.bring.ui.Group
-import io.github.hipotures.bring.ui.PlateMark
-import io.github.hipotures.bring.ui.RoutePlate
-import io.github.hipotures.bring.ui.RowDivider
-import io.github.hipotures.bring.ui.Segmented
-import io.github.hipotures.bring.ui.StatusPlate
-import io.github.hipotures.bring.ui.ThemeChoice
-import themechanics.compose.Tm
-import themechanics.compose.TmDimens
-import themechanics.compose.TmTone
-import themechanics.compose.tmHardShadow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -48,10 +37,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -60,12 +51,27 @@ import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.storage.StorageAccess
-import io.github.hipotures.bring.versionLine
+import io.github.hipotures.bring.sync.RouteStatus
+import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
+import io.github.hipotures.bring.ui.FolderGlyph
+import io.github.hipotures.bring.ui.Group
 import io.github.hipotures.bring.ui.KeyValue
 import io.github.hipotures.bring.ui.Panel
+import io.github.hipotures.bring.ui.PlateMark
+import io.github.hipotures.bring.ui.RoutePlate
+import io.github.hipotures.bring.ui.RowDivider
+import io.github.hipotures.bring.ui.Segmented
 import io.github.hipotures.bring.ui.SharpButton
+import io.github.hipotures.bring.ui.StatusPlate
 import io.github.hipotures.bring.ui.Tag
+import io.github.hipotures.bring.ui.ThemeChoice
+import io.github.hipotures.bring.ui.tmFieldColors
+import io.github.hipotures.bring.versionLine
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
+import themechanics.compose.tmHardShadow
 
 private val MIB: ULong = 1024UL * 1024UL
 
@@ -79,9 +85,15 @@ private val OFFLOAD_CHOICES = listOf(
 )
 
 @Composable
-fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
+fun SettingsScreen(
+    rings: List<RingInfo>,
+    ring: RingInfo,
+    vm: AppViewModel,
+    onAddRing: () -> Unit,
+) {
     val context = LocalContext.current
     val route by vm.route.collectAsStateWithLifecycle()
+    val routes by vm.routes.collectAsStateWithLifecycle()
     val sync by vm.sync.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
@@ -89,9 +101,15 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     val folders by vm.folders.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
-    var offload by remember { mutableStateOf(context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)) }
+    val defaultOffload = context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)
+    var offload by remember(ring.ringId, ring.offloadThresholdBytes) {
+        mutableStateOf(ring.offloadThresholdBytes ?: defaultOffload)
+    }
     var picking by rememberSaveable { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var draftName by remember(ring.ringId, ring.name) { mutableStateOf(ring.name) }
     var confirmForget by remember { mutableStateOf(false) }
+    val multiRing = rings.size > 1
     DisposableEffect(Unit) { onDispose { vm.clearMessage() } }
 
     Column(
@@ -104,7 +122,62 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     ) {
         message?.let { ErrorLine(it) }
 
-        Panel(title = "Ring") {
+        Panel(
+            title = "Rings",
+            trailing = { StatusPlate("${rings.size} paired", PlateMark.ACTIVE, small = true) },
+        ) {
+            Group {
+                rings.forEachIndexed { i, r ->
+                    if (i > 0) RowDivider()
+                    val selected = r.ringId == ring.ringId
+                    val st = routes[r.ringId] ?: RouteStatus.UNKNOWN
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(if (selected) Tm.colors.selectBg else Tm.colors.surface)
+                            .clickable { vm.selectRing(r.ringId) }
+                            .padding(horizontal = TmDimens.cellPadX, vertical = TmDimens.space2),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                r.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = Tm.colors.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                r.lanUrl,
+                                style = Tm.text.code,
+                                color = Tm.colors.text2,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        RoutePlate(st)
+                    }
+                }
+            }
+            SharpButton(
+                "+ Pair another Ring",
+                onClick = onAddRing,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Panel(
+            title = if (multiRing) "Ring · ${ring.name}" else "Ring",
+            trailing = {
+                SharpButton("Rename", onClick = {
+                    draftName = ring.name
+                    renaming = true
+                })
+            },
+        ) {
+            KeyValue("Name", ring.name)
             KeyValue("Device", ring.deviceSlug)
             KeyValue("Ring ID", ring.ringId.take(16))
             KeyValue("LAN", ring.lanUrl)
@@ -141,7 +214,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             },
         ) {
             Text(
-                "Re-reads the Ring index from scratch, asks the Ring to regenerate missing thumbnails, " +
+                "Re-reads ${ring.name}'s index from scratch, asks it to regenerate missing thumbnails, " +
                     "rescans watched folders and retries queued uploads.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Tm.colors.text2,
@@ -168,7 +241,14 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
 
         PermissionsPanel(storage)
 
-        Panel(title = "Watched folders") {
+        Panel(title = if (multiRing) "Watched folders · ${ring.name}" else "Watched folders") {
+            if (multiRing) {
+                Text(
+                    "Folders belong to ${ring.name}. Multiple Rings may watch the same folder.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Tm.colors.text2,
+                )
+            }
             if (folders.isEmpty()) {
                 Text("None yet.", style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)
             }
@@ -189,7 +269,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Tm.colors.text,
                                 )
-                                Text("→ Ring: ${f.ringFolder}", style = Tm.text.code, color = Tm.colors.text2)
+                                Text("→ ${ring.name}: ${f.ringFolder}", style = Tm.text.code, color = Tm.colors.text2)
                             }
                             ActionIcon(Icons.Outlined.Delete, "Stop watching", { vm.removeFolder(f.id) })
                         }
@@ -224,9 +304,10 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             }
         }
 
-        Panel(title = "Offload") {
+        Panel(title = if (multiRing) "Offload · ${ring.name}" else "Offload") {
             Text(
-                "After a verified upload, delete the local copy of files larger than:",
+                "After a verified upload, delete the local copy of files larger than:" +
+                    if (multiRing) " (Shared folders wait until all watching Rings have verified the file.)" else "",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Tm.colors.text2,
             )
@@ -252,11 +333,16 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
 
         Panel(title = "Pairing") {
             Text(
-                "Forgetting the Ring drops its index on this device. Local files are not touched.",
+                "Forgetting ${ring.name} drops its index and watched folders on this device. " +
+                    if (multiRing) "Other Rings and local files are not touched." else "Local files are not touched.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Tm.colors.text2,
             )
-            SharpButton("Forget Ring", danger = true, onClick = { confirmForget = true })
+            SharpButton(
+                if (multiRing) "Forget ${ring.name}" else "Forget Ring",
+                danger = true,
+                onClick = { confirmForget = true },
+            )
         }
 
         Text(versionLine(context), style = Tm.text.code, color = Tm.colors.text2)
@@ -273,31 +359,60 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
         )
     }
 
-    if (confirmForget) {
+    if (renaming) {
         AlertDialog(
-            onDismissRequest = { confirmForget = false },
-            // Overlay: 2 dp line1 frame and a hard offset shadow, no soft elevation.
-            // The padding keeps the offset shadow inside the dialog window.
+            onDismissRequest = { renaming = false },
             modifier = Modifier
                 .padding(end = TmDimens.shadowOverlay, bottom = TmDimens.shadowOverlay)
                 .tmHardShadow(Tm.colors.shadowOverlay, TmDimens.shadowOverlay)
                 .border(TmDimens.bw1, Tm.colors.line1, MaterialTheme.shapes.extraLarge),
             containerColor = Tm.colors.surface,
             tonalElevation = 0.dp,
-            title = { Text("Forget this Ring?") },
+            title = { Text("Rename Ring") },
+            text = {
+                OutlinedTextField(
+                    value = draftName,
+                    onValueChange = { draftName = it },
+                    label = { Text("Custom name") },
+                    placeholder = { Text("e.g. Videos, Screenshots, NAS") },
+                    singleLine = true,
+                    colors = tmFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                SharpButton("Save", primary = true, onClick = {
+                    renaming = false
+                    vm.renameRing(ring.ringId, draftName)
+                })
+            },
+            dismissButton = { SharpButton("Cancel", onClick = { renaming = false }) },
+        )
+    }
+
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            modifier = Modifier
+                .padding(end = TmDimens.shadowOverlay, bottom = TmDimens.shadowOverlay)
+                .tmHardShadow(Tm.colors.shadowOverlay, TmDimens.shadowOverlay)
+                .border(TmDimens.bw1, Tm.colors.line1, MaterialTheme.shapes.extraLarge),
+            containerColor = Tm.colors.surface,
+            tonalElevation = 0.dp,
+            title = { Text("Forget ${ring.name}?") },
             text = {
                 Text(
                     buildAnnotatedString {
                         append("You will need ")
                         withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("bring pair") }
-                        append(" to connect again.")
+                        append(" to connect to this Ring again.")
                     },
                 )
             },
             confirmButton = {
                 SharpButton("Forget", danger = true, primary = true, onClick = {
                     confirmForget = false
-                    vm.forget()
+                    vm.forget(ring.ringId)
                 })
             },
             dismissButton = { SharpButton("Cancel", onClick = { confirmForget = false }) },

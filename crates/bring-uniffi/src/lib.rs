@@ -5,8 +5,8 @@
 //! `reqwest`. Long operations check a cancel flag ([`Moon::cancel`]) between
 //! files and chunks.
 //!
-//! The device token is never stored here: Kotlin keeps it in the Android
-//! Keystore and hands it over with [`Moon::set_device_token`] after start.
+//! Device tokens are never stored here: Kotlin keeps them in the Android
+//! Keystore and hands them over with [`Moon::set_ring_token`] after start.
 
 uniffi::setup_scaffolding!();
 
@@ -16,6 +16,7 @@ mod pairing;
 mod store;
 mod sync;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -82,25 +83,33 @@ impl From<FileState> for EntryState {
     }
 }
 
-/// The paired Ring.
+/// One paired Ring.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RingInfo {
+    pub id: i64,
     pub ring_id: String,
+    /// User-defined custom name (falls back to the LAN host if unset).
+    pub name: String,
     pub lan_url: String,
     pub wan_url: Option<String>,
     /// Hex SHA-256 pin of the LAN certificate (also for Media3's OkHttp).
     pub tls_cert_sha256: String,
     pub device_slug: String,
+    /// Per-Ring offload threshold in bytes (`None` = default 100 MiB, `u64::MAX` = Never).
+    pub offload_threshold_bytes: Option<u64>,
 }
 
 impl From<&store::RingRow> for RingInfo {
     fn from(r: &store::RingRow) -> Self {
         Self {
-            ring_id: hex_encode(&r.ring_id),
+            id: r.id,
+            ring_id: r.ring_id_hex(),
+            name: r.display_name(),
             lan_url: r.lan_url.clone(),
             wan_url: r.wan_url.clone(),
             tls_cert_sha256: hex_encode(&r.pin),
             device_slug: r.device_slug.clone(),
+            offload_threshold_bytes: r.offload_threshold_bytes,
         }
     }
 }
@@ -109,6 +118,7 @@ impl From<&store::RingRow> for RingInfo {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Entry {
     pub id: i64,
+    pub ring_id: String,
     pub ring_path: String,
     pub local_path: Option<String>,
     pub remote_file_id: Option<i64>,
@@ -116,7 +126,7 @@ pub struct Entry {
     pub mtime_ns: i64,
     pub mime: Option<String>,
     pub blake3: Option<String>,
-    /// Pass to [`Moon::thumbnail`].
+    /// Pass to [`Moon::thumbnail_for`].
     pub thumb: Option<String>,
     pub state: EntryState,
     /// Never uploaded automatically again (§5.1).
@@ -187,15 +197,19 @@ struct Clients {
 /// skips background sync, so the budget is generous.
 const LAN_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
-/// The Moon: local index, sync engine and Ring client.
+/// The Moon: local index, sync engine and multi-Ring client.
 #[derive(uniffi::Object)]
 pub struct Moon {
     db: Mutex<Connection>,
     rt: tokio::runtime::Runtime,
-    token: Mutex<Option<String>>,
-    route: Mutex<Route>,
-    clients: Mutex<Option<Clients>>,
+    /// Device tokens keyed by hex `ring_id`.
+    tokens: Mutex<HashMap<String, String>>,
+    /// Active route keyed by hex `ring_id`.
+    routes: Mutex<HashMap<String, Route>>,
+    /// HTTP clients keyed by hex `ring_id`.
+    clients: Mutex<HashMap<String, Clients>>,
     pending: Mutex<Option<pairing::PendingPairing>>,
+    /// Fallback policy when a Ring has no per-Ring threshold saved.
     policy: Mutex<OffloadPolicy>,
     /// Serialises sync operations (scan, index, outbox).
     work: Mutex<()>,
@@ -207,32 +221,55 @@ impl Moon {
         self.db.lock().expect("db lock poisoned")
     }
 
-    fn policy(&self) -> OffloadPolicy {
-        *self.policy.lock().expect("policy lock")
+    pub(crate) fn policy_for(&self, ring: &store::RingRow) -> OffloadPolicy {
+        match ring.offload_threshold_bytes {
+            Some(threshold_bytes) => OffloadPolicy { threshold_bytes },
+            None => *self.policy.lock().expect("policy lock"),
+        }
     }
 
     fn work(&self) -> MutexGuard<'_, ()> {
         self.work.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn session(&self) -> Result<Session, MoonError> {
-        let ring = store::ring(&self.db())?.ok_or(MoonError::NotPaired)?;
+    fn default_ring_row(&self) -> Result<store::RingRow, MoonError> {
+        store::ring(&self.db())?.ok_or(MoonError::NotPaired)
+    }
+
+    fn ring_row(&self, ring_id: &str) -> Result<store::RingRow, MoonError> {
+        store::ring_by_hex(&self.db(), ring_id)?.ok_or(MoonError::NotPaired)
+    }
+
+    fn session_for(&self, ring_id: &str) -> Result<Session, MoonError> {
+        let ring = self.ring_row(ring_id)?;
+        let key = ring.ring_id_hex();
         let token = self
-            .token
+            .tokens
             .lock()
-            .expect("token lock")
-            .clone()
+            .expect("tokens lock")
+            .get(&key)
+            .cloned()
             .ok_or(MoonError::NotPaired)?;
-        let route = *self.route.lock().expect("route lock");
+        let route = self
+            .routes
+            .lock()
+            .expect("routes lock")
+            .get(&key)
+            .copied()
+            .unwrap_or(Route::Lan);
         let mut clients = self.clients.lock().expect("clients lock");
-        if clients.as_ref().is_none_or(|c| c.pin != ring.pin) {
-            *clients = Some(Clients {
-                pin: ring.pin,
-                lan: client::pinned(ring.pin)?,
-                wan: None,
-            });
+        let rebuild = clients.get(&key).is_none_or(|c| c.pin != ring.pin);
+        if rebuild {
+            clients.insert(
+                key.clone(),
+                Clients {
+                    pin: ring.pin,
+                    lan: client::pinned(ring.pin)?,
+                    wan: None,
+                },
+            );
         }
-        let c = clients.as_mut().expect("just set");
+        let c = clients.get_mut(&key).expect("just inserted");
         let (base, http) = match route {
             Route::Lan => (ring.lan_url.clone(), c.lan.clone()),
             Route::Wan => {
@@ -257,7 +294,7 @@ impl Moon {
     fn query_entries(
         &self,
         cond: &str,
-        arg: impl rusqlite::ToSql,
+        args: &[&dyn rusqlite::ToSql],
     ) -> Result<Vec<Entry>, MoonError> {
         let db = self.db();
         let cols = store::ENTRY_COLS
@@ -266,14 +303,18 @@ impl Moon {
             .collect::<Vec<_>>()
             .join(", ");
         let mut stmt = db.prepare(&format!(
-            "SELECT {cols}, o.entry_id IS NOT NULL, o.last_error
-             FROM entries e LEFT JOIN outbox o ON o.entry_id = e.id
+            "SELECT {cols}, r.ring_id, o.entry_id IS NOT NULL, o.last_error
+             FROM entries e
+             JOIN rings r ON r.id = e.ring_id
+             LEFT JOIN outbox o ON o.entry_id = e.id
              WHERE {cond} ORDER BY e.ring_path"
         ))?;
-        let rows = stmt.query_map([arg], |r| {
+        let rows = stmt.query_map(args, |r| {
             let e = store::entry_from_row(r)?;
+            let rid: [u8; 16] = r.get(12)?;
             Ok(Entry {
                 id: e.id,
+                ring_id: hex_encode(&rid),
                 ring_path: e.ring_path,
                 local_path: e.local_path,
                 remote_file_id: e.remote_file_id,
@@ -284,18 +325,17 @@ impl Moon {
                 thumb: e.thumb.map(|h| h.to_hex()),
                 state: e.state.into(),
                 suppressed: e.suppressed,
-                upload_pending: r.get(11)?,
-                last_error: r.get(12)?,
+                upload_pending: r.get(13)?,
+                last_error: r.get(14)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    fn probe(&self, timeout: Duration) -> Result<bool, MoonError> {
-        let ring = store::ring(&self.db())?.ok_or(MoonError::NotPaired)?;
+    fn probe_ring(&self, ring: &store::RingRow, timeout: Duration) -> Result<bool, MoonError> {
         let http = client::pinned(ring.pin)?;
         let url = format!("{}/api/v1/health", ring.lan_url.trim_end_matches('/'));
-        let expected = hex_encode(&ring.ring_id);
+        let expected = ring.ring_id_hex();
         Ok(self.rt.block_on(async {
             let resp = tokio::time::timeout(timeout, async {
                 client::json::<HealthResponse>(http.get(&url).timeout(timeout)).await
@@ -322,8 +362,8 @@ impl Moon {
         Ok(Arc::new(Self {
             db: Mutex::new(conn),
             rt,
-            token: Mutex::default(),
-            route: Mutex::new(Route::Lan),
+            tokens: Mutex::default(),
+            routes: Mutex::default(),
             clients: Mutex::default(),
             pending: Mutex::default(),
             policy: Mutex::default(),
@@ -332,22 +372,61 @@ impl Moon {
         }))
     }
 
-    /// The paired Ring, if any.
+    /// All paired Rings, oldest first.
+    pub fn rings(&self) -> Result<Vec<RingInfo>, MoonError> {
+        Ok(store::rings(&self.db())?
+            .iter()
+            .map(RingInfo::from)
+            .collect())
+    }
+
+    /// The first paired Ring, if any (convenience for single-Ring callers).
     pub fn ring(&self) -> Result<Option<RingInfo>, MoonError> {
         Ok(store::ring(&self.db())?.as_ref().map(RingInfo::from))
     }
 
-    /// Hands over the token from the Android Keystore (after every start).
-    pub fn set_device_token(&self, token: String) {
-        *self.token.lock().expect("token lock") = Some(token);
+    /// Hands over the device token for `ring_id` from the Android Keystore.
+    pub fn set_ring_token(&self, ring_id: String, token: String) {
+        self.tokens
+            .lock()
+            .expect("tokens lock")
+            .insert(ring_id, token);
     }
 
-    /// Forgets the Ring and its index. Local files are not touched.
+    /// Single-Ring convenience: sets the token on the first paired Ring.
+    pub fn set_device_token(&self, token: String) {
+        if let Ok(Some(r)) = store::ring(&self.db()) {
+            self.set_ring_token(r.ring_id_hex(), token);
+        }
+    }
+
+    /// Gives a paired Ring a custom display name (e.g. "Videos", "Screenshots").
+    pub fn rename_ring(&self, ring_id: String, name: String) -> Result<RingInfo, MoonError> {
+        let row = self.ring_row(&ring_id)?;
+        let updated = store::rename_ring(&self.db(), row.id, &name)?;
+        Ok(RingInfo::from(&updated))
+    }
+
+    /// Forgets one paired Ring and its index. Local files are not touched.
+    pub fn forget_ring_by_id(&self, ring_id: String) -> Result<(), MoonError> {
+        let _w = self.work();
+        let Some(row) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(());
+        };
+        store::forget_ring_by_db_id(&mut self.db(), row.id)?;
+        self.tokens.lock().expect("tokens lock").remove(&ring_id);
+        self.routes.lock().expect("routes lock").remove(&ring_id);
+        self.clients.lock().expect("clients lock").remove(&ring_id);
+        Ok(())
+    }
+
+    /// Forgets all paired Rings and their indices. Local files are not touched.
     pub fn forget_ring(&self) -> Result<(), MoonError> {
         let _w = self.work();
         store::forget_ring(&mut self.db())?;
-        *self.token.lock().expect("token lock") = None;
-        *self.clients.lock().expect("clients lock") = None;
+        self.tokens.lock().expect("tokens lock").clear();
+        self.routes.lock().expect("routes lock").clear();
+        self.clients.lock().expect("clients lock").clear();
         Ok(())
     }
 
@@ -371,64 +450,99 @@ impl Moon {
 
     // --- Routing ---------------------------------------------------------
 
-    pub fn route(&self) -> Route {
-        *self.route.lock().expect("route lock")
+    pub fn route_for(&self, ring_id: String) -> Route {
+        self.routes
+            .lock()
+            .expect("routes lock")
+            .get(&ring_id)
+            .copied()
+            .unwrap_or(Route::Lan)
     }
 
-    pub fn set_route(&self, route: Route) -> Result<(), MoonError> {
-        if route == Route::Wan
-            && store::ring(&self.db())?
-                .ok_or(MoonError::NotPaired)?
-                .wan_url
-                .is_none()
-        {
+    pub fn route(&self) -> Route {
+        self.default_ring_row()
+            .map(|r| self.route_for(r.ring_id_hex()))
+            .unwrap_or(Route::Lan)
+    }
+
+    pub fn set_route_for(&self, ring_id: String, route: Route) -> Result<(), MoonError> {
+        let ring = self.ring_row(&ring_id)?;
+        if route == Route::Wan && ring.wan_url.is_none() {
             return Err(MoonError::invalid("this Ring has no wan_url"));
         }
-        *self.route.lock().expect("route lock") = route;
+        self.routes
+            .lock()
+            .expect("routes lock")
+            .insert(ring.ring_id_hex(), route);
         Ok(())
     }
 
-    /// `GET {lan_url}/health` over the pinned client, checking `ring_id`.
-    pub fn probe_lan(&self, timeout_ms: u32) -> Result<bool, MoonError> {
-        self.probe(Duration::from_millis(timeout_ms.into()))
+    pub fn set_route(&self, route: Route) -> Result<(), MoonError> {
+        let ring = self.default_ring_row()?;
+        self.set_route_for(ring.ring_id_hex(), route)
     }
 
-    /// LAN detection (§4): on unmetered Wi-Fi, try the LAN listener
-    /// ([`LAN_PROBE_TIMEOUT`]);
-    /// otherwise use the WAN route if there is one. Sets and returns the
-    /// route, or `None` when the Ring is unreachable from here.
-    pub fn select_route(&self, unmetered_wifi: bool) -> Result<Option<Route>, MoonError> {
-        let route = if unmetered_wifi && self.probe(LAN_PROBE_TIMEOUT)? {
+    /// `GET {lan_url}/health` over the pinned client, checking `ring_id`.
+    pub fn probe_lan_for(&self, ring_id: String, timeout_ms: u32) -> Result<bool, MoonError> {
+        let ring = self.ring_row(&ring_id)?;
+        self.probe_ring(&ring, Duration::from_millis(timeout_ms.into()))
+    }
+
+    pub fn probe_lan(&self, timeout_ms: u32) -> Result<bool, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.probe_ring(&ring, Duration::from_millis(timeout_ms.into()))
+    }
+
+    /// LAN detection (§4) for one Ring.
+    pub fn select_route_for(
+        &self,
+        ring_id: String,
+        unmetered_wifi: bool,
+    ) -> Result<Option<Route>, MoonError> {
+        let ring = self.ring_row(&ring_id)?;
+        let route = if unmetered_wifi && self.probe_ring(&ring, LAN_PROBE_TIMEOUT)? {
             Some(Route::Lan)
-        } else if store::ring(&self.db())?
-            .ok_or(MoonError::NotPaired)?
-            .wan_url
-            .is_some()
-        {
+        } else if ring.wan_url.is_some() {
             Some(Route::Wan)
         } else {
             None
         };
         if let Some(r) = route {
-            *self.route.lock().expect("route lock") = r;
+            self.routes
+                .lock()
+                .expect("routes lock")
+                .insert(ring.ring_id_hex(), r);
         }
         Ok(route)
     }
 
+    pub fn select_route(&self, unmetered_wifi: bool) -> Result<Option<Route>, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.select_route_for(ring.ring_id_hex(), unmetered_wifi)
+    }
+
     // --- Configuration -----------------------------------------------------
 
-    /// Files larger than this are deleted locally after a verified upload.
+    /// Fallback offload threshold when a Ring has no per-Ring override.
     pub fn set_offload_threshold(&self, bytes: u64) {
         self.policy.lock().expect("policy lock").threshold_bytes = bytes;
     }
 
-    /// Watches `local_dir`. The default Ring folder is
-    /// `<basename>/<device_slug>` (e.g. `DCIM/pixel-8`, §5).
-    pub fn add_watched_folder(
+    /// Per-Ring offload threshold (`u64::MAX` = never delete local copies).
+    pub fn set_ring_offload_threshold(&self, ring_id: String, bytes: u64) -> Result<(), MoonError> {
+        let ring = self.ring_row(&ring_id)?;
+        store::set_ring_offload(&self.db(), ring.id, bytes)
+    }
+
+    /// Watches `local_dir` for `ring_id`. Multiple Rings may watch the same
+    /// `local_dir`. The default Ring folder is `<basename>/<device_slug>`.
+    pub fn add_watched_folder_for(
         &self,
+        ring_id: String,
         local_dir: String,
         ring_folder: Option<String>,
     ) -> Result<WatchedFolder, MoonError> {
+        let ring = self.ring_row(&ring_id)?;
         let local_dir = local_dir.trim_end_matches('/').to_owned();
         let dir = Path::new(&local_dir);
         if !dir.is_absolute() {
@@ -437,7 +551,6 @@ impl Moon {
         let ring_folder = match ring_folder {
             Some(f) => f,
             None => {
-                let ring = store::ring(&self.db())?.ok_or(MoonError::NotPaired)?;
                 let base = dir
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -452,14 +565,25 @@ impl Moon {
         }
         let db = self.db();
         db.execute(
-            "INSERT INTO watched_folders (local_dir, ring_folder, enabled) VALUES (?1, ?2, 1)
-             ON CONFLICT (local_dir) DO UPDATE SET ring_folder = excluded.ring_folder, enabled = 1",
-            params![local_dir, ring_folder.as_str()],
+            "INSERT INTO watched_folders (ring_id, local_dir, ring_folder, enabled)
+             VALUES (?1, ?2, ?3, 1)
+             ON CONFLICT (ring_id, local_dir) DO UPDATE SET
+               ring_folder = excluded.ring_folder, enabled = 1",
+            params![ring.id, local_dir, ring_folder.as_str()],
         )?;
-        store::watched_folders(&db)?
+        store::watched_folders(&db, ring.id)?
             .into_iter()
             .find(|f| f.local_dir == local_dir)
             .ok_or_else(|| MoonError::storage("watched folder vanished"))
+    }
+
+    pub fn add_watched_folder(
+        &self,
+        local_dir: String,
+        ring_folder: Option<String>,
+    ) -> Result<WatchedFolder, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.add_watched_folder_for(ring.ring_id_hex(), local_dir, ring_folder)
     }
 
     pub fn remove_watched_folder(&self, id: i64) -> Result<(), MoonError> {
@@ -468,21 +592,31 @@ impl Moon {
         Ok(())
     }
 
+    pub fn watched_folders_for(&self, ring_id: String) -> Result<Vec<WatchedFolder>, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(Vec::new());
+        };
+        store::watched_folders(&self.db(), ring.id)
+    }
+
     pub fn watched_folders(&self) -> Result<Vec<WatchedFolder>, MoonError> {
-        store::watched_folders(&self.db())
+        let Some(ring) = store::ring(&self.db())? else {
+            return Ok(Vec::new());
+        };
+        store::watched_folders(&self.db(), ring.id)
     }
 
     // --- Sync ----------------------------------------------------------------
 
-    /// Queues one file outside the watched folders (Share Sheet → `Inbox`).
-    /// If `ring_path` is taken, the next free conflict name is used (the
-    /// same `name (slug).ext` rule as the Ring). Returns the entry.
-    pub fn enqueue_upload(
+    /// Queues one file outside watched folders (Share Sheet → `Inbox`) for `ring_id`.
+    pub fn enqueue_upload_for(
         &self,
+        ring_id: String,
         local_path: String,
         ring_path: String,
     ) -> Result<Entry, MoonError> {
         let _w = self.work();
+        let ring = self.ring_row(&ring_id)?;
         let target = RelPath::new(&ring_path)
             .map_err(|e| MoonError::invalid(format!("{ring_path:?}: {e}")))?;
         if target.folder() == ".bring" {
@@ -492,13 +626,12 @@ impl Moon {
             .ok_or_else(|| MoonError::invalid(format!("{local_path} is not a file")))?;
         let id = {
             let db = self.db();
-            match store::entry_by_local_path(&db, &local_path)? {
+            match store::entry_by_local_path(&db, ring.id, &local_path)? {
                 Some(e) => e.id,
                 None => {
-                    let slug = store::ring(&db)?.ok_or(MoonError::NotPaired)?.device_slug;
                     let mut free = None;
-                    for cand in transfer::conflict_candidates(&target, &slug) {
-                        if store::entry_by_ring_path(&db, cand.as_str())?.is_none() {
+                    for cand in transfer::conflict_candidates(&target, &ring.device_slug) {
+                        if store::entry_by_ring_path(&db, ring.id, cand.as_str())?.is_none() {
                             free = Some(cand);
                             break;
                         }
@@ -506,6 +639,7 @@ impl Moon {
                     let path = free.ok_or_else(|| MoonError::invalid("no free name"))?;
                     store::insert_local(
                         &db,
+                        ring.id,
                         path.as_str(),
                         &local_path,
                         stat.size,
@@ -518,50 +652,80 @@ impl Moon {
         self.entry(id)
     }
 
+    pub fn enqueue_upload(
+        &self,
+        local_path: String,
+        ring_path: String,
+    ) -> Result<Entry, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.enqueue_upload_for(ring.ring_id_hex(), local_path, ring_path)
+    }
+
     /// One entry by id.
     pub fn entry(&self, id: i64) -> Result<Entry, MoonError> {
-        self.query_entries("e.id = ?1", id)?
+        self.query_entries("e.id = ?1", &[&id])?
             .pop()
             .ok_or_else(|| MoonError::invalid(format!("no entry {id}")))
     }
 
-    /// Pulls index changes from the Ring.
-    pub fn sync_index(&self) -> Result<IndexReport, MoonError> {
+    /// Pulls index changes from `ring_id`.
+    pub fn sync_index_for(&self, ring_id: String) -> Result<IndexReport, MoonError> {
         let _w = self.work();
         self.cancel.store(false, Ordering::Relaxed);
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         self.rt.block_on(self.sync_index_inner(&s))
     }
 
-    /// Scans the watched folders for new, changed and deleted files.
-    pub fn scan_local(&self) -> Result<ScanReport, MoonError> {
-        let _w = self.work();
-        self.scan_local_inner()
+    pub fn sync_index(&self) -> Result<IndexReport, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.sync_index_for(ring.ring_id_hex())
     }
 
-    /// Hashes pending files, uploads them and applies the retention rule.
-    pub fn process_outbox(
+    /// Scans watched folders for `ring_id`.
+    pub fn scan_local_for(&self, ring_id: String) -> Result<ScanReport, MoonError> {
+        let _w = self.work();
+        let ring = self.ring_row(&ring_id)?;
+        self.scan_local_inner(ring.id)
+    }
+
+    pub fn scan_local(&self) -> Result<ScanReport, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.scan_local_for(ring.ring_id_hex())
+    }
+
+    /// Hashes pending files, uploads them and applies the retention rule for `ring_id`.
+    pub fn process_outbox_for(
         &self,
+        ring_id: String,
         listener: Option<Arc<dyn TransferListener>>,
     ) -> Result<OutboxReport, MoonError> {
         let _w = self.work();
         self.cancel.store(false, Ordering::Relaxed);
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         self.rt
             .block_on(self.process_outbox_inner(&s, listener.as_ref()))
     }
 
-    /// Index → scan → outbox → index (to pick up our own uploads and thumbs).
-    pub fn run_sync(
+    pub fn process_outbox(
         &self,
+        listener: Option<Arc<dyn TransferListener>>,
+    ) -> Result<OutboxReport, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.process_outbox_for(ring.ring_id_hex(), listener)
+    }
+
+    /// Index → scan → outbox → index (to pick up our own uploads and thumbs) for `ring_id`.
+    pub fn run_sync_for(
+        &self,
+        ring_id: String,
         listener: Option<Arc<dyn TransferListener>>,
     ) -> Result<SyncReport, MoonError> {
         let _w = self.work();
         self.cancel.store(false, Ordering::Relaxed);
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         self.rt.block_on(async {
             let mut index = self.sync_index_inner(&s).await?;
-            let scan = self.scan_local_inner()?;
+            let scan = self.scan_local_inner(s.ring.id)?;
             let (outbox, uploaded_ids) =
                 self.process_outbox_tracked(&s, listener.as_ref()).await?;
             let after = self.sync_index_inner(&s).await?;
@@ -576,20 +740,31 @@ impl Moon {
         })
     }
 
-    /// Full check & repair: triggers a Ring rescan (for missing thumbnails or
-    /// hashes), rewinds the delta cursor to 0 and re-reads the Ring index,
-    /// rescans watched folders, and clears retry backoff on queued uploads.
-    pub fn verify_sync(&self) -> Result<VerifyReport, MoonError> {
+    pub fn run_sync(
+        &self,
+        listener: Option<Arc<dyn TransferListener>>,
+    ) -> Result<SyncReport, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.run_sync_for(ring.ring_id_hex(), listener)
+    }
+
+    /// Full check & repair for `ring_id`.
+    pub fn verify_sync_for(&self, ring_id: String) -> Result<VerifyReport, MoonError> {
         let _w = self.work();
         self.cancel.store(false, Ordering::Relaxed);
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         self.rt.block_on(self.verify_sync_inner(&s))
+    }
+
+    pub fn verify_sync(&self) -> Result<VerifyReport, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.verify_sync_for(ring.ring_id_hex())
     }
 
     /// Deletes the local copies of the given `synced` entries (the files
     /// stay on the Ring; the entries become `remote-only`). Entries that are
-    /// not synced, wait for an upload, or changed locally are skipped.
-    /// Does not wait for a running sync.
+    /// not synced, wait for an upload, changed locally, or are still needed by
+    /// another Ring are skipped. Does not wait for a running sync.
     pub fn free_local(&self, ids: Vec<i64>) -> Result<FreeReport, MoonError> {
         sync::free_local(&mut self.db(), &ids)
     }
@@ -601,22 +776,37 @@ impl Moon {
 
     // --- Browsing & streaming ---------------------------------------------
 
-    /// Entries under `prefix` (a Ring folder such as `DCIM`), or all.
-    pub fn entries(&self, prefix: Option<String>) -> Result<Vec<Entry>, MoonError> {
+    /// Entries of `ring_id` under `prefix` (a Ring folder such as `DCIM`), or all.
+    pub fn entries_for(
+        &self,
+        ring_id: String,
+        prefix: Option<String>,
+    ) -> Result<Vec<Entry>, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(Vec::new());
+        };
         let prefix = prefix.map(|p| p.trim_end_matches('/').to_owned());
         self.query_entries(
-            "?1 IS NULL OR e.ring_path = ?1
-             OR (e.ring_path >= ?1 || '/' AND e.ring_path < ?1 || '0')",
-            prefix,
+            "e.ring_id = ?1 AND (?2 IS NULL OR e.ring_path = ?2
+             OR (e.ring_path >= ?2 || '/' AND e.ring_path < ?2 || '0'))",
+            &[&ring.id, &prefix],
         )
     }
 
-    /// JPEG thumbnail bytes for an entry's `thumb`.
-    pub fn thumbnail(&self, thumb: String) -> Result<Vec<u8>, MoonError> {
+    /// Entries of the first paired Ring (single-Ring convenience).
+    pub fn entries(&self, prefix: Option<String>) -> Result<Vec<Entry>, MoonError> {
+        let Some(ring) = store::ring(&self.db())? else {
+            return Ok(Vec::new());
+        };
+        self.entries_for(ring.ring_id_hex(), prefix)
+    }
+
+    /// JPEG thumbnail bytes for an entry's `thumb` from `ring_id`.
+    pub fn thumbnail_for(&self, ring_id: String, thumb: String) -> Result<Vec<u8>, MoonError> {
         if thumb.len() != 64 || !thumb.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(MoonError::invalid("bad thumbnail id"));
         }
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         self.rt.block_on(async {
             Ok(s.send(s.get(&format!("/thumbs/{thumb}")))
                 .await?
@@ -626,12 +816,26 @@ impl Moon {
         })
     }
 
-    /// `length` bytes of a Ring file from `offset` (HTTP Range).
-    pub fn read_range(&self, file_id: i64, offset: u64, length: u64) -> Result<Vec<u8>, MoonError> {
+    pub fn thumbnail(&self, thumb: String) -> Result<Vec<u8>, MoonError> {
+        if thumb.len() != 64 || !thumb.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(MoonError::invalid("bad thumbnail id"));
+        }
+        let ring = self.default_ring_row()?;
+        self.thumbnail_for(ring.ring_id_hex(), thumb)
+    }
+
+    /// `length` bytes of a Ring file from `offset` (HTTP Range) on `ring_id`.
+    pub fn read_range_for(
+        &self,
+        ring_id: String,
+        file_id: i64,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, MoonError> {
         if length == 0 {
             return Ok(Vec::new());
         }
-        let s = self.session()?;
+        let s = self.session_for(&ring_id)?;
         let end = offset
             .checked_add(length - 1)
             .ok_or_else(|| MoonError::invalid("range overflows"))?;
@@ -655,10 +859,22 @@ impl Moon {
         })
     }
 
-    /// URL + headers + pin for Media3 (`OkHttpDataSource`).
-    pub fn media_source(&self, file_id: i64) -> Result<MediaSource, MoonError> {
-        let s = self.session()?;
-        let lan = self.route() == Route::Lan;
+    pub fn read_range(&self, file_id: i64, offset: u64, length: u64) -> Result<Vec<u8>, MoonError> {
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+        let ring = self.default_ring_row()?;
+        self.read_range_for(ring.ring_id_hex(), file_id, offset, length)
+    }
+
+    /// URL + headers + pin for Media3 (`OkHttpDataSource`) on `ring_id`.
+    pub fn media_source_for(
+        &self,
+        ring_id: String,
+        file_id: i64,
+    ) -> Result<MediaSource, MoonError> {
+        let s = self.session_for(&ring_id)?;
+        let lan = self.route_for(s.ring.ring_id_hex()) == Route::Lan;
         Ok(MediaSource {
             url: s.url(&format!("/files/{file_id}/content")),
             authorization: format!("Bearer {}", s.token),
@@ -666,13 +882,22 @@ impl Moon {
         })
     }
 
-    /// A signed URL for players that cannot send headers. Only useful on the
-    /// WAN route (external players cannot pin the LAN certificate, §3.1).
-    pub fn stream_url(&self, file_id: i64) -> Result<String, MoonError> {
-        let s = self.session()?;
+    pub fn media_source(&self, file_id: i64) -> Result<MediaSource, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.media_source_for(ring.ring_id_hex(), file_id)
+    }
+
+    /// A signed URL for players that cannot send headers (WAN route).
+    pub fn stream_url_for(&self, ring_id: String, file_id: i64) -> Result<String, MoonError> {
+        let s = self.session_for(&ring_id)?;
         let r: StreamUrlResponse = self
             .rt
             .block_on(s.json(s.post(&format!("/files/{file_id}/stream-url"))))?;
         Ok(format!("{}{}", s.base, r.url))
+    }
+
+    pub fn stream_url(&self, file_id: i64) -> Result<String, MoonError> {
+        let ring = self.default_ring_row()?;
+        self.stream_url_for(ring.ring_id_hex(), file_id)
     }
 }

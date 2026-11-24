@@ -15,7 +15,10 @@ pub enum Role {
 }
 
 const RING_MIGRATIONS: &[&str] = &[include_str!("ring/0001_init.sql")];
-const MOON_MIGRATIONS: &[&str] = &[include_str!("moon/0001_init.sql")];
+const MOON_MIGRATIONS: &[&str] = &[
+    include_str!("moon/0001_init.sql"),
+    include_str!("moon/0002_multi_ring.sql"),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -228,10 +231,96 @@ mod tests {
     #[test]
     fn state_check_constraint() {
         let conn = open_in_memory(Role::Moon).unwrap();
+        conn.execute(
+            "INSERT INTO rings (ring_id, lan_url, tls_cert_sha256, device_uuid, device_slug)
+             VALUES (x'0102030405060708090a0b0c0d0e0f10', 'https://127.0.0.1:7443',
+                     x'0000000000000000000000000000000000000000000000000000000000000000',
+                     x'11111111111111111111111111111111', 'phone')",
+            [],
+        )
+        .unwrap();
         let err = conn.execute(
-            "INSERT INTO entries (ring_path, size, mtime_ns, state) VALUES ('a', 0, 0, 'bogus')",
+            "INSERT INTO entries (ring_id, ring_path, size, mtime_ns, state) VALUES (1, 'a', 0, 0, 'bogus')",
             [],
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn moon_migrates_v1_to_v2_preserving_data_and_allowing_shared_folders() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        conn.execute_batch(include_str!("moon/0001_init.sql")).unwrap();
+        conn.pragma_update(None, "user_version", 1u32).unwrap();
+
+        conn.execute(
+            "INSERT INTO rings (id, ring_id, name, lan_url, tls_cert_sha256, device_uuid, device_slug)
+             VALUES (1, x'0102030405060708090a0b0c0d0e0f10', 'Home', 'https://10.0.0.1:7443',
+                     x'0000000000000000000000000000000000000000000000000000000000000000',
+                     x'11111111111111111111111111111111', 'phone')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO watched_folders (id, local_dir, ring_folder, enabled)
+             VALUES (10, '/sdcard/DCIM', 'DCIM/phone', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entries (id, ring_path, local_path, size, mtime_ns, state)
+             VALUES (42, 'DCIM/phone/a.jpg', '/sdcard/DCIM/a.jpg', 123, 456, 'local-only')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns) VALUES (42, 123, 456)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&mut conn, Role::Moon).unwrap();
+
+        let v: u32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 2);
+
+        let wf_ring: i64 = conn
+            .query_row("SELECT ring_id FROM watched_folders WHERE id = 10", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wf_ring, 1);
+
+        let entry_ring: i64 = conn
+            .query_row("SELECT ring_id FROM entries WHERE id = 42", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(entry_ring, 1);
+
+        let outbox_cnt: i64 = conn
+            .query_row("SELECT COUNT(*) FROM outbox WHERE entry_id = 42", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(outbox_cnt, 1);
+
+        // Second Ring can watch the exact same local_dir and have the same ring_path.
+        conn.execute(
+            "INSERT INTO rings (id, ring_id, name, lan_url, tls_cert_sha256, device_uuid, device_slug)
+             VALUES (2, x'2102030405060708090a0b0c0d0e0f10', 'Backup', 'https://10.0.0.2:7443',
+                     x'1111111111111111111111111111111111111111111111111111111111111111',
+                     x'22222222222222222222222222222222', 'phone')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO watched_folders (ring_id, local_dir, ring_folder, enabled)
+             VALUES (2, '/sdcard/DCIM', 'DCIM/phone', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entries (ring_id, ring_path, local_path, size, mtime_ns, state)
+             VALUES (2, 'DCIM/phone/a.jpg', '/sdcard/DCIM/a.jpg', 123, 456, 'local-only')",
+            [],
+        )
+        .unwrap();
     }
 }

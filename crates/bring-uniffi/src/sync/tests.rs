@@ -5,8 +5,28 @@ use bring_core::hash::hash_bytes;
 
 use super::*;
 
+const RING_1: i64 = 1;
+const RING_2: i64 = 2;
+
 fn db() -> Connection {
-    open_in_memory(Role::Moon).unwrap()
+    let c = open_in_memory(Role::Moon).unwrap();
+    c.execute(
+        "INSERT INTO rings (id, ring_id, name, lan_url, tls_cert_sha256, device_uuid, device_slug)
+         VALUES (1, x'0102030405060708090a0b0c0d0e0f10', 'Primary', 'https://10.0.0.1:7443',
+                 x'0000000000000000000000000000000000000000000000000000000000000000',
+                 x'11111111111111111111111111111111', 'phone')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO rings (id, ring_id, name, lan_url, tls_cert_sha256, device_uuid, device_slug)
+         VALUES (2, x'2102030405060708090a0b0c0d0e0f10', 'Secondary', 'https://10.0.0.2:7443',
+                 x'1111111111111111111111111111111111111111111111111111111111111111',
+                 x'22222222222222222222222222222222', 'phone')",
+        [],
+    )
+    .unwrap();
+    c
 }
 
 fn remote(id: i64, path: &str, content: &[u8], deleted: bool) -> IndexEntry {
@@ -26,15 +46,16 @@ fn remote(id: i64, path: &str, content: &[u8], deleted: bool) -> IndexEntry {
 }
 
 fn get(c: &Connection, path: &str) -> Option<EntryRow> {
-    store::entry_by_ring_path(c, path).unwrap()
+    store::entry_by_ring_path(c, RING_1, path).unwrap()
 }
 
 /// A `synced` row as left behind by a verified upload.
 fn synced(c: &Connection, path: &str, local: &str, content: &[u8], file_id: i64) {
     c.execute(
-        "INSERT INTO entries (ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, 'synced')",
+        "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'synced')",
         params![
+            RING_1,
             path,
             local,
             file_id,
@@ -48,25 +69,25 @@ fn synced(c: &Connection, path: &str, local: &str, content: &[u8], file_id: i64)
 #[test]
 fn remote_files_appear_update_and_disappear() {
     let c = db();
-    apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap();
     let r = get(&c, "DCIM/a.jpg").unwrap();
     assert_eq!(r.state, FileState::RemoteOnly);
     assert_eq!((r.remote_file_id, r.local_path), (Some(1), None));
 
-    apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"two!", false)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"two!", false)).unwrap();
     assert_eq!(get(&c, "DCIM/a.jpg").unwrap().size, 4);
 
-    apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"", true)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"", true)).unwrap();
     assert!(get(&c, "DCIM/a.jpg").is_none());
     // Tombstones for unknown paths are ignored.
-    apply_index_entry(&c, &remote(9, "DCIM/zzz.jpg", b"", true)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(9, "DCIM/zzz.jpg", b"", true)).unwrap();
 }
 
 #[test]
 fn ring_side_delete_never_touches_local_copy() {
     let c = db();
     synced(&c, "DCIM/p/a.jpg", "/sd/DCIM/a.jpg", b"photo", 5);
-    apply_index_entry(&c, &remote(5, "DCIM/p/a.jpg", b"", true)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(5, "DCIM/p/a.jpg", b"", true)).unwrap();
     let r = get(&c, "DCIM/p/a.jpg").unwrap();
     assert_eq!(r.state, FileState::LocalOnly);
     assert!(r.suppressed, "never re-uploaded (§5.1)");
@@ -77,13 +98,13 @@ fn ring_side_delete_never_touches_local_copy() {
 fn synced_entry_follows_metadata_but_not_foreign_content() {
     let c = db();
     synced(&c, "DCIM/p/a.jpg", "/sd/a.jpg", b"photo", 5);
-    apply_index_entry(&c, &remote(5, "DCIM/p/a.jpg", b"photo", false)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(5, "DCIM/p/a.jpg", b"photo", false)).unwrap();
     let r = get(&c, "DCIM/p/a.jpg").unwrap();
     assert_eq!(r.state, FileState::Synced);
     assert_eq!(r.thumb, Some(hash_bytes(b"thumb")));
 
     // The desktop replaced the file: our version is no longer on the Ring.
-    apply_index_entry(&c, &remote(5, "DCIM/p/a.jpg", b"edited", false)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(5, "DCIM/p/a.jpg", b"edited", false)).unwrap();
     let r = get(&c, "DCIM/p/a.jpg").unwrap();
     assert_eq!((r.state, r.suppressed), (FileState::LocalOnly, true));
 }
@@ -91,23 +112,23 @@ fn synced_entry_follows_metadata_but_not_foreign_content() {
 #[test]
 fn only_files_new_to_this_device_count_as_received() {
     let c = db();
-    assert!(apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
+    assert!(apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
     // The same file again (e.g. its thumbnail landed): not news.
-    assert!(!apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
+    assert!(!apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
     // Replaced on the Ring: news.
-    assert!(apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"two!", false)).unwrap());
+    assert!(apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"two!", false)).unwrap());
     // Our own upload echoed back with its thumbnail: not news.
     synced(&c, "DCIM/p/b.jpg", "/sd/b.jpg", b"photo", 5);
-    assert!(!apply_index_entry(&c, &remote(5, "DCIM/p/b.jpg", b"photo", false)).unwrap());
+    assert!(!apply_index_entry(&c, RING_1, &remote(5, "DCIM/p/b.jpg", b"photo", false)).unwrap());
     // Deletions are not news either.
-    assert!(!apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"", true)).unwrap());
+    assert!(!apply_index_entry(&c, RING_1, &remote(1, "DCIM/a.jpg", b"", true)).unwrap());
 }
 
 #[test]
 fn pending_upload_keeps_its_path() {
     let c = db();
-    store::insert_local(&c, "Inbox/a.pdf", "/sd/a.pdf", 3, 1, None).unwrap();
-    apply_index_entry(&c, &remote(8, "Inbox/a.pdf", b"other", false)).unwrap();
+    store::insert_local(&c, RING_1, "Inbox/a.pdf", "/sd/a.pdf", 3, 1, None).unwrap();
+    apply_index_entry(&c, RING_1, &remote(8, "Inbox/a.pdf", b"other", false)).unwrap();
     let r = get(&c, "Inbox/a.pdf").unwrap();
     assert_eq!(r.state, FileState::LocalOnly);
     assert_eq!(r.remote_file_id, None);
@@ -116,6 +137,7 @@ fn pending_upload_keeps_its_path() {
 fn folder(dir: &Path, ring: &str) -> WatchedFolder {
     WatchedFolder {
         id: 1,
+        ring_id: "0102030405060708090a0b0c0d0e0f10".into(),
         local_dir: dir.to_str().unwrap().into(),
         ring_folder: ring.into(),
         enabled: true,
@@ -133,25 +155,25 @@ fn scan_finds_new_changed_and_deleted_files() {
     let f = [folder(&dcim, "DCIM/pixel")];
     let mut c = db();
 
-    let r = apply_scan(&mut c, &f).unwrap();
+    let r = apply_scan(&mut c, RING_1, &f).unwrap();
     assert_eq!((r.new_files, r.changed, r.gone), (2, 0, 0));
     let a = get(&c, "DCIM/pixel/Camera/a.jpg").unwrap();
     assert_eq!((a.state, a.blake3), (FileState::LocalOnly, None));
     assert!(get(&c, "DCIM/pixel/.pending-123.jpg").is_none());
 
     // Unchanged: nothing to do.
-    assert_eq!(apply_scan(&mut c, &f).unwrap(), ScanReport::default());
+    assert_eq!(apply_scan(&mut c, RING_1, &f).unwrap(), ScanReport::default());
 
     // b.jpg became synced; then it is edited → local-only again (§5.3).
     let b_local = dcim.join("Camera/b.jpg");
     c.execute(
         "UPDATE entries SET state = 'synced', remote_file_id = 4, blake3 = ?1
-         WHERE ring_path = 'DCIM/pixel/Camera/b.jpg'",
-        [hash_bytes(b"bbb")],
+         WHERE ring_id = ?2 AND ring_path = 'DCIM/pixel/Camera/b.jpg'",
+        params![hash_bytes(b"bbb"), RING_1],
     )
     .unwrap();
     fs::write(&b_local, b"bbb, edited").unwrap();
-    let r = apply_scan(&mut c, &f).unwrap();
+    let r = apply_scan(&mut c, RING_1, &f).unwrap();
     assert_eq!(r.changed, 1);
     let b = get(&c, "DCIM/pixel/Camera/b.jpg").unwrap();
     assert_eq!(
@@ -162,13 +184,13 @@ fn scan_finds_new_changed_and_deleted_files() {
     // Deleting: a synced file becomes remote-only, a local-only one vanishes.
     c.execute(
         "UPDATE entries SET state = 'synced', remote_file_id = 4
-         WHERE ring_path = 'DCIM/pixel/Camera/b.jpg'",
-        [],
+         WHERE ring_id = ?1 AND ring_path = 'DCIM/pixel/Camera/b.jpg'",
+        [RING_1],
     )
     .unwrap();
     fs::remove_file(&b_local).unwrap();
     fs::remove_file(dcim.join("Camera/a.jpg")).unwrap();
-    let r = apply_scan(&mut c, &f).unwrap();
+    let r = apply_scan(&mut c, RING_1, &f).unwrap();
     assert_eq!(r.gone, 2);
     let b = get(&c, "DCIM/pixel/Camera/b.jpg").unwrap();
     assert_eq!((b.state, b.local_path), (FileState::RemoteOnly, None));
@@ -183,9 +205,9 @@ fn unmounted_folder_is_not_a_mass_delete() {
     fs::write(sd.join("a.jpg"), b"aaa").unwrap();
     let f = [folder(&sd, "DCIM/pixel")];
     let mut c = db();
-    apply_scan(&mut c, &f).unwrap();
+    apply_scan(&mut c, RING_1, &f).unwrap();
     fs::rename(tmp.path().join("sdcard"), tmp.path().join("ejected")).unwrap();
-    let r = apply_scan(&mut c, &f).unwrap();
+    let r = apply_scan(&mut c, RING_1, &f).unwrap();
     assert_eq!((r.gone, r.unavailable_folders), (0, 1));
     assert!(get(&c, "DCIM/pixel/a.jpg").is_some());
 }
@@ -196,9 +218,9 @@ fn reappearing_file_takes_over_remote_entry() {
     let dcim = tmp.path().join("DCIM");
     fs::create_dir_all(&dcim).unwrap();
     let mut c = db();
-    apply_index_entry(&c, &remote(3, "DCIM/pixel/v.mp4", b"video", false)).unwrap();
+    apply_index_entry(&c, RING_1, &remote(3, "DCIM/pixel/v.mp4", b"video", false)).unwrap();
     fs::write(dcim.join("v.mp4"), b"video").unwrap();
-    let r = apply_scan(&mut c, &[folder(&dcim, "DCIM/pixel")]).unwrap();
+    let r = apply_scan(&mut c, RING_1, &[folder(&dcim, "DCIM/pixel")]).unwrap();
     assert_eq!(r.new_files, 1);
     let e = get(&c, "DCIM/pixel/v.mp4").unwrap();
     assert_eq!(e.state, FileState::LocalOnly);
@@ -215,11 +237,11 @@ fn free_local_deletes_only_verified_synced_copies() {
         (p.to_str().unwrap().to_owned(), st)
     };
     let mut c = db();
-    let row = |c: &Connection, ring: &str, local: &str, st: LocalStat, state: &str| {
+    let row = |c: &Connection, ring_id: i64, ring: &str, local: &str, st: LocalStat, state: &str| {
         c.execute(
-            "INSERT INTO entries (ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
-             VALUES (?1, ?2, 9, ?3, ?4, ?5, ?6)",
-            params![ring, local, st.size, st.mtime_ns, hash_bytes(b"x"), state],
+            "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
+             VALUES (?1, ?2, ?3, 9, ?4, ?5, ?6, ?7)",
+            params![ring_id, ring, local, st.size, st.mtime_ns, hash_bytes(b"x"), state],
         )
         .unwrap();
         c.last_insert_rowid()
@@ -228,10 +250,11 @@ fn free_local_deletes_only_verified_synced_copies() {
     let (b, sb) = file("b.mp4", b"bbbb");
     let (l, sl) = file("l.mp4", b"llll");
     let (p, sp) = file("p.mp4", b"pppp");
-    let ia = row(&c, "V/a.mp4", &a, sa, "synced");
+    let ia = row(&c, RING_1, "V/a.mp4", &a, sa, "synced");
     // Edited after it was verified: kept.
     let ib = row(
         &c,
+        RING_1,
         "V/b.mp4",
         &b,
         LocalStat {
@@ -241,9 +264,9 @@ fn free_local_deletes_only_verified_synced_copies() {
         "synced",
     );
     // Only on the phone: never deleted.
-    let il = row(&c, "V/l.mp4", &l, sl, "local-only");
+    let il = row(&c, RING_1, "V/l.mp4", &l, sl, "local-only");
     // Synced but waiting in the outbox: kept.
-    let ip = row(&c, "V/p.mp4", &p, sp, "synced");
+    let ip = row(&c, RING_1, "V/p.mp4", &p, sp, "synced");
     c.execute(
         "INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns) VALUES (?1, 4, 0)",
         [ip],
@@ -269,6 +292,68 @@ fn free_local_deletes_only_verified_synced_copies() {
         assert!(Path::new(kept).exists(), "{kept} must stay");
     }
     assert_eq!(get(&c, "V/b.mp4").unwrap().state, FileState::Synced);
+}
+
+#[test]
+fn shared_folder_keeps_local_file_until_all_rings_verify_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dcim = tmp.path().join("DCIM");
+    fs::create_dir_all(&dcim).unwrap();
+    let video = dcim.join("big.mp4");
+    fs::write(&video, b"video-bytes").unwrap();
+    let st = local_stat(&video).unwrap().unwrap();
+    let v_str = video.to_str().unwrap();
+
+    let mut c = db();
+    // Both Ring 1 and Ring 2 watch the exact same local directory.
+    c.execute(
+        "INSERT INTO watched_folders (ring_id, local_dir, ring_folder, enabled)
+         VALUES (?1, ?2, 'DCIM/phone', 1), (?3, ?2, 'DCIM/phone', 1)",
+        params![RING_1, dcim.to_str().unwrap(), RING_2],
+    )
+    .unwrap();
+
+    // Ring 1 synced it; Ring 2 hasn't even scanned it yet.
+    c.execute(
+        "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
+         VALUES (?1, 'DCIM/phone/big.mp4', ?2, 10, ?3, ?4, ?5, 'synced')",
+        params![RING_1, v_str, st.size, st.mtime_ns, hash_bytes(b"video-bytes")],
+    )
+    .unwrap();
+    let id1 = c.last_insert_rowid();
+
+    assert!(other_ring_needs_local_file(&c, RING_1, v_str, st).unwrap());
+    let r1 = free_local(&mut c, &[id1]).unwrap();
+    assert_eq!((r1.freed, r1.skipped), (0, 1));
+    assert!(video.exists(), "must not delete before Ring 2 uploads it");
+
+    // Now Ring 2 also has it verified as synced.
+    c.execute(
+        "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
+         VALUES (?1, 'DCIM/phone/big.mp4', ?2, 20, ?3, ?4, ?5, 'synced')",
+        params![RING_2, v_str, st.size, st.mtime_ns, hash_bytes(b"video-bytes")],
+    )
+    .unwrap();
+
+    assert!(!other_ring_needs_local_file(&c, RING_1, v_str, st).unwrap());
+    let r2 = free_local(&mut c, &[id1]).unwrap();
+    assert_eq!((r2.freed, r2.skipped), (1, 0));
+    assert!(!video.exists());
+    // Both Rings now reflect remote-only.
+    assert_eq!(
+        store::entry_by_ring_path(&c, RING_1, "DCIM/phone/big.mp4")
+            .unwrap()
+            .unwrap()
+            .state,
+        FileState::RemoteOnly
+    );
+    assert_eq!(
+        store::entry_by_ring_path(&c, RING_2, "DCIM/phone/big.mp4")
+            .unwrap()
+            .unwrap()
+            .state,
+        FileState::RemoteOnly
+    );
 }
 
 #[test]

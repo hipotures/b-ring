@@ -13,6 +13,7 @@ import io.github.hipotures.bring.SyncUi
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.describe
 import io.github.hipotures.bring.ffi.MoonException
+import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.SyncReport
 import io.github.hipotures.bring.ffi.TransferListener
 import kotlinx.coroutines.CancellationException
@@ -27,11 +28,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * One sync round: route selection (§4), then `run_sync` (index → scan →
- * outbox → index) as a foreground `dataSync` job, so switching apps or
- * taking a screenshot does not stop an upload. Its notification is the
- * blinking upload mark in the status bar (see [Notifications]); the history
- * lists finished rounds.
+ * Sync round across all paired Rings (or one specific Ring if [KEY_RING_ID] is
+ * given): route selection (§4), then `run_sync_for` (index → scan → outbox →
+ * index) as a foreground `dataSync` job, so switching apps or taking a
+ * screenshot does not stop an upload.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -41,7 +41,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val bring = applicationContext.bring
         val trigger = if (inputData.getBoolean(KEY_MANUAL, false)) Trigger.MANUAL else Trigger.AUTO
         val isMedia = inputData.getBoolean(KEY_MEDIA, false)
-        if (bring.tokens.load() == null) return@withContext Result.success()
+        val targetRingId = inputData.getString(KEY_RING_ID)
+        if (!bring.tokens.hasAny()) return@withContext Result.success()
 
         // Only one round runs at a time. Redundant periodic/resume auto checks
         // step aside immediately; manual and media-triggered rounds wait cleanly
@@ -56,6 +57,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             // Keep watching for new files: re-arm the media trigger once we hold the lock.
             SyncScheduler.watchMedia(applicationContext, rearm = isMedia)
             val moon = bring.moon
+            val paired = runCatching { moon.rings() }.getOrDefault(emptyList())
+                .filter { bring.tokens.load(it.ringId) != null }
+            if (paired.isEmpty()) return@withContext Result.success()
+
+            val targets = targetRingId?.let { id ->
+                paired.filter { it.ringId == id }.ifEmpty { paired }
+            } ?: paired
+
             try {
                 setForeground(getForegroundInfo())
             } catch (e: Exception) {
@@ -64,64 +73,116 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 Log.w(TAG, "running without a foreground service: $e")
             }
 
-            val route = try {
-                moon.selectRoute(applicationContext.onUnmeteredWifi())
-            } catch (_: MoonException.NotPaired) {
-                return@withContext Result.success()
-            }
-            bring.route.value = RouteStatus.of(route)
-            if (!RoutePolicy.mayRun(trigger, route)) {
-                val why = if (route == null) "Ring unreachable" else "Not on the Ring's LAN"
-                if (trigger != Trigger.MANUAL) return@withContext Result.success()
-                record(SyncRound(System.currentTimeMillis(), 0, true, route?.name ?: "", 0, 0, 0, 0, 0, 0, 0, why, emptyList()))
-                return@withContext failure(why)
-            }
+            val unmetered = applicationContext.onUnmeteredWifi()
+            var totalReceived = 0
+            var totalUploaded = 0
+            var totalOffloaded = 0
+            var totalFailed = 0
+            var totalRemaining = 0
+            var retryNeeded = false
+            var lastError: String? = null
+            var anyRan = false
 
-            bring.activeSync.value = SyncUi(running = true)
-            val started = SystemClock.elapsedRealtime()
-            val progress = Progress()
-            fun round(report: SyncReport?, error: String?) = SyncRound(
-                endedAt = System.currentTimeMillis(),
-                durationMs = SystemClock.elapsedRealtime() - started,
-                manual = trigger == Trigger.MANUAL,
-                route = route?.name ?: "",
-                uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completed.size,
-                uploadedBytes = progress.completedBytes,
-                // Files new to this device; the engine leaves out our own
-                // uploads echoed back by the index.
-                received = report?.index?.received?.toInt() ?: 0,
-                found = report?.let { (it.scan.newFiles + it.scan.changed).toInt() } ?: 0,
-                offloaded = report?.outbox?.offloaded?.toInt() ?: 0,
-                failed = report?.outbox?.failed?.toInt() ?: 0,
-                remaining = report?.outbox?.remaining?.toInt() ?: 0,
-                error = error,
-                files = progress.completed.toList(),
-            )
-
-            try {
-                val report = coroutineScope {
-                    val run = async { moon.runSync(progress) }
-                    val blink = launch { blink(progress) }
-                    try {
-                        run.await()
-                    } catch (e: CancellationException) {
-                        // The blocking call ends at the next file or chunk boundary.
-                        moon.cancel()
-                        throw e
-                    } finally {
-                        blink.cancelAndJoin()
-                    }
+            for (ring in targets) {
+                val route = try {
+                    moon.selectRouteFor(ring.ringId, unmetered)
+                } catch (_: MoonException.NotPaired) {
+                    continue
                 }
-                record(round(report, null))
-                Result.success(summary(report))
-            } catch (e: MoonException.Cancelled) {
-                Result.retry()
-            } catch (e: MoonException.Network) {
-                record(round(null, e.describe()))
-                if (trigger == Trigger.MANUAL) failure(e.describe()) else Result.retry()
-            } catch (e: MoonException) {
-                record(round(null, e.describe()))
-                failure(e.describe())
+                bring.setRoute(ring.ringId, RouteStatus.of(route))
+                if (!RoutePolicy.mayRun(trigger, route)) {
+                    val why = if (route == null) "Ring unreachable" else "Not on the Ring's LAN"
+                    if (trigger == Trigger.MANUAL && targets.size == 1) {
+                        record(
+                            SyncRound(
+                                endedAt = System.currentTimeMillis(),
+                                durationMs = 0,
+                                manual = true,
+                                route = route?.name ?: "",
+                                uploaded = 0,
+                                uploadedBytes = 0,
+                                received = 0,
+                                found = 0,
+                                offloaded = 0,
+                                failed = 0,
+                                remaining = 0,
+                                error = why,
+                                files = emptyList(),
+                                ringName = ring.name,
+                            ),
+                        )
+                        lastError = why
+                    }
+                    continue
+                }
+
+                anyRan = true
+                bring.activeSync.value = SyncUi(running = true, ringId = ring.ringId, ringName = ring.name)
+                val started = SystemClock.elapsedRealtime()
+                val progress = Progress(ring, showRingName = paired.size > 1)
+                fun round(report: SyncReport?, error: String?) = SyncRound(
+                    endedAt = System.currentTimeMillis(),
+                    durationMs = SystemClock.elapsedRealtime() - started,
+                    manual = trigger == Trigger.MANUAL,
+                    route = route?.name ?: "",
+                    uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completed.size,
+                    uploadedBytes = progress.completedBytes,
+                    received = report?.index?.received?.toInt() ?: 0,
+                    found = report?.let { (it.scan.newFiles + it.scan.changed).toInt() } ?: 0,
+                    offloaded = report?.outbox?.offloaded?.toInt() ?: 0,
+                    failed = report?.outbox?.failed?.toInt() ?: 0,
+                    remaining = report?.outbox?.remaining?.toInt() ?: 0,
+                    error = error,
+                    files = progress.completed.toList(),
+                    ringName = ring.name,
+                )
+
+                try {
+                    val report = coroutineScope {
+                        val run = async { moon.runSyncFor(ring.ringId, progress) }
+                        val blink = launch { blink(progress) }
+                        try {
+                            run.await()
+                        } catch (e: CancellationException) {
+                            moon.cancel()
+                            throw e
+                        } finally {
+                            blink.cancelAndJoin()
+                        }
+                    }
+                    record(round(report, null))
+                    totalReceived += report.index.received.toInt()
+                    totalUploaded += (report.outbox.uploaded + report.outbox.deduplicated).toInt()
+                    totalOffloaded += report.outbox.offloaded.toInt()
+                    totalFailed += report.outbox.failed.toInt()
+                    totalRemaining += report.outbox.remaining.toInt()
+                } catch (_: MoonException.Cancelled) {
+                    return@withContext Result.retry()
+                } catch (e: MoonException.Network) {
+                    val msg = e.describe()
+                    record(round(null, msg))
+                    lastError = msg
+                    if (trigger != Trigger.MANUAL) retryNeeded = true
+                } catch (e: MoonException) {
+                    val msg = e.describe()
+                    record(round(null, msg))
+                    lastError = msg
+                }
+            }
+
+            when {
+                retryNeeded -> Result.retry()
+                !anyRan && lastError != null -> failure(lastError)
+                lastError != null && targets.size == 1 -> failure(lastError)
+                else -> Result.success(
+                    workDataOf(
+                        KEY_RECEIVED to totalReceived,
+                        KEY_UPLOADED to totalUploaded,
+                        KEY_OFFLOADED to totalOffloaded,
+                        KEY_FAILED to totalFailed,
+                        KEY_REMAINING to totalRemaining,
+                    ),
+                )
             }
         } finally {
             bring.activeSync.value = SyncUi()
@@ -152,20 +213,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     private fun failure(message: String) = Result.failure(workDataOf(KEY_ERROR to message))
 
-    private fun summary(r: SyncReport): Data = workDataOf(
-        KEY_RECEIVED to r.index.received.toInt(),
-        KEY_UPLOADED to (r.outbox.uploaded + r.outbox.deduplicated).toInt(),
-        KEY_OFFLOADED to r.outbox.offloaded.toInt(),
-        KEY_FAILED to r.outbox.failed.toInt(),
-        KEY_REMAINING to r.outbox.remaining.toInt(),
-    )
-
     /**
-     * Upload progress → WorkManager progress (the app's file tags), at most
-     * once a second: with many small files the engine reports
-     * hundreds of files per second, far too fast to read.
+     * Upload progress → live [BringApp.activeSync] + WorkManager progress (at
+     * most once a second for SQLite persistence).
      */
-    private inner class Progress : TransferListener {
+    private inner class Progress(
+        private val ring: RingInfo,
+        private val showRingName: Boolean,
+    ) : TransferListener {
         private var lastAt = 0L
         private var current: String? = null
         private var currentSent = 0L
@@ -193,9 +248,18 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             }
             currentSent = sent
             val totalSent = doneBytes + sent
-            last = Notifications.Upload(ringPath, sent, total, files, totalSent)
+            last = Notifications.Upload(
+                path = ringPath,
+                sent = sent,
+                total = total,
+                files = files,
+                bytes = totalSent,
+                ringName = if (showRingName) ring.name else null,
+            )
             applicationContext.bring.activeSync.value = SyncUi(
                 running = true,
+                ringId = ring.ringId,
+                ringName = ring.name,
                 path = ringPath,
                 sent = sent,
                 total = total,
@@ -212,6 +276,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             lastAt = now
             setProgressAsync(
                 workDataOf(
+                    KEY_RING_ID to ring.ringId,
+                    KEY_RING_NAME to ring.name,
                     KEY_PATH to ringPath,
                     KEY_SENT to sent,
                     KEY_TOTAL to total,
@@ -227,6 +293,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val BLINK_MS = 600L
         const val KEY_MANUAL = "manual"
         const val KEY_MEDIA = "media"
+        const val KEY_RING_ID = "ring_id"
+        const val KEY_RING_NAME = "ring_name"
         const val KEY_PATH = "path"
         const val KEY_SENT = "sent"
         const val KEY_TOTAL = "total"

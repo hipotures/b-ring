@@ -406,9 +406,9 @@ private fun MediaSquare(content: @Composable BoxScope.() -> Unit) {
 @Composable
 fun Thumb(entry: Entry, name: String) {
     val kind = remember(entry.mime, name) { kindOf(entry.mime, name) }
-    val model: Any? = remember(entry.thumb, entry.localPath, entry.mtimeNs, kind) {
+    val model: Any? = remember(entry.ringId, entry.thumb, entry.localPath, entry.mtimeNs, kind) {
         when {
-            entry.thumb != null -> RingThumb(entry.thumb!!)
+            entry.thumb != null -> RingThumb(entry.ringId, entry.thumb!!)
             entry.localPath != null && kind == MediaKind.IMAGE -> File(entry.localPath!!)
             entry.localPath != null && kind == MediaKind.VIDEO -> LocalVideoThumb(entry.localPath!!, entry.mtimeNs)
             else -> null

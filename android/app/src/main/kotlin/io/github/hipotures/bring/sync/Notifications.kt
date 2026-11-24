@@ -36,7 +36,14 @@ object Notifications {
     }
 
     /** One progress report: the current file and the round's totals. */
-    data class Upload(val path: String, val sent: Long, val total: Long, val files: Int, val bytes: Long)
+    data class Upload(
+        val path: String,
+        val sent: Long,
+        val total: Long,
+        val files: Int,
+        val bytes: Long,
+        val ringName: String? = null,
+    )
 
     fun build(context: Context, upload: Upload?, lit: Boolean): Notification {
         val open = PendingIntent.getActivity(
@@ -56,7 +63,8 @@ object Notifications {
         if (upload == null) {
             b.setContentTitle("Syncing with the Ring")
         } else {
-            b.setContentTitle("Uploading · ${upload.files} ${if (upload.files == 1) "file" else "files"} · ${formatBytes(upload.bytes)}")
+            val prefix = upload.ringName?.takeIf { it.isNotBlank() }?.let { "$it · " } ?: ""
+            b.setContentTitle("Uploading · $prefix${upload.files} ${if (upload.files == 1) "file" else "files"} · ${formatBytes(upload.bytes)}")
                 .setContentText(upload.path.substringAfterLast('/'))
             if (upload.total > 0) b.setProgress(100, (upload.sent * 100 / upload.total).toInt(), false)
         }

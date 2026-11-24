@@ -31,7 +31,13 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<PairState> = _state.asStateFlow()
     private var job: Job? = null
 
-    fun start(code: String, deviceName: String) {
+    fun reset() {
+        job?.cancel()
+        job = null
+        _state.value = PairState.Idle
+    }
+
+    fun start(code: String, deviceName: String, ringLabel: String = "") {
         job?.cancel()
         job = viewModelScope.launch(Dispatchers.IO) {
             _state.value = PairState.Connecting
@@ -48,8 +54,14 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive) {
                 try {
                     val paired = moon.pairFinish(POLL_SECS)
-                    bring.tokens.save(paired.deviceToken)
-                    _state.value = PairState.Done(paired.ring)
+                    bring.tokens.save(paired.ring.ringId, paired.deviceToken)
+                    val label = ringLabel.trim()
+                    val finalRing = if (label.isNotEmpty()) {
+                        runCatching { moon.renameRing(paired.ring.ringId, label) }.getOrDefault(paired.ring)
+                    } else {
+                        paired.ring
+                    }
+                    _state.value = PairState.Done(finalRing)
                     return@launch
                 } catch (_: MoonException.PairingPending) {
                     networkErrors = 0
