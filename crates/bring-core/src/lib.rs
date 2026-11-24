@@ -5,6 +5,8 @@
 //! `docs/ARCHITECTURE.md`.
 
 pub mod api;
+pub mod codec;
+pub mod ctl;
 pub mod db;
 pub mod hash;
 pub mod model;

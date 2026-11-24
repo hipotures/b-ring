@@ -1,8 +1,252 @@
-//! `bring` — companion CLI for `bringd`.
-//!
-//! Scaffold only; `status`, `pair`, `devices` and `revoke` arrive in Phase 1
-//! step 8.
+//! `bring` — companion CLI for `bringd` (talks over the control socket).
 
-fn main() {
-    println!("bring {}", bring_core::VERSION);
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use bring_core::ctl::{self, CtlEvent, CtlRequest, DeviceInfo};
+use clap::{Parser, Subcommand};
+use qrcode::QrCode;
+use qrcode::render::unicode::Dense1x2;
+
+#[derive(Parser)]
+#[command(name = "bring", version, about = "Control the B-Ring daemon")]
+struct Cli {
+    /// Control socket of bringd.
+    #[arg(long, global = true)]
+    socket: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Show the Ring's state.
+    Status,
+    /// Pair a new Moon (shows a QR code and a code for manual entry).
+    Pair,
+    /// List paired devices.
+    Devices,
+    /// Revoke a device by slug or id.
+    Revoke { device: String },
+}
+
+struct Conn {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+impl Conn {
+    fn open(path: &Path) -> Result<Self, String> {
+        let stream = UnixStream::connect(path).map_err(|e| {
+            format!(
+                "cannot reach bringd at {}: {e}\n(is it running? try `systemctl --user status bringd`)",
+                path.display()
+            )
+        })?;
+        let writer = stream.try_clone().map_err(|e| e.to_string())?;
+        Ok(Self {
+            reader: BufReader::new(stream),
+            writer,
+        })
+    }
+
+    fn send(&mut self, req: &CtlRequest) -> Result<(), String> {
+        let mut line = serde_json::to_vec(req).map_err(|e| e.to_string())?;
+        line.push(b'\n');
+        self.writer.write_all(&line).map_err(|e| e.to_string())
+    }
+
+    fn recv(&mut self) -> Result<CtlEvent, String> {
+        let mut line = String::new();
+        let n = self
+            .reader
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("bringd closed the connection".into());
+        }
+        serde_json::from_str(&line).map_err(|e| format!("bad reply from bringd: {e}"))
+    }
+}
+
+fn fmt_time(secs: Option<i64>) -> String {
+    match secs {
+        None => "never".into(),
+        Some(s) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            let ago = now - s;
+            match ago {
+                ..60 => "just now".into(),
+                60..3600 => format!("{} min ago", ago / 60),
+                3600..86400 => format!("{} h ago", ago / 3600),
+                _ => format!("{} d ago", ago / 86400),
+            }
+        }
+    }
+}
+
+fn print_devices(devices: &[DeviceInfo]) {
+    if devices.is_empty() {
+        println!("No paired devices. Run `bring pair`.");
+        return;
+    }
+    println!(
+        "{:<4} {:<20} {:<24} {:<14} STATE",
+        "ID", "SLUG", "NAME", "LAST SEEN"
+    );
+    for d in devices {
+        println!(
+            "{:<4} {:<20} {:<24} {:<14} {}",
+            d.id,
+            d.slug,
+            d.name,
+            fmt_time(d.last_seen_at),
+            if d.revoked { "revoked" } else { "active" }
+        );
+    }
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
+}
+
+fn unexpected(ev: CtlEvent) -> String {
+    match ev {
+        CtlEvent::Error { message } => message,
+        other => format!("unexpected reply: {other:?}"),
+    }
+}
+
+fn ask_yes_no(prompt: &str) -> bool {
+    print!("{prompt} [y/N] ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "t" | "tak"
+    )
+}
+
+fn pair(conn: &mut Conn) -> Result<(), String> {
+    conn.send(&CtlRequest::Pair)?;
+    match conn.recv()? {
+        CtlEvent::PairPayload {
+            text,
+            lan_url,
+            expires_in_secs,
+        } => {
+            let qr = QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
+            println!("{}", qr.render::<Dense1x2>().quiet_zone(true).build());
+            println!("Scan this with the B-Ring app, or type the code:\n");
+            println!("    {text}\n");
+            let expires = match expires_in_secs {
+                s @ 0..120 => format!("{s} s"),
+                s => format!("{} min", s / 60),
+            };
+            println!("Ring: {lan_url} · expires in {expires}");
+            println!("Waiting for a device...");
+        }
+        other => return Err(unexpected(other)),
+    }
+    loop {
+        match conn.recv()? {
+            CtlEvent::PairSas { sas, device_name } => {
+                println!("\n\"{device_name}\" wants to pair.");
+                println!("Code on this computer:  {}", ctl::format_sas(&sas));
+                let ok = ask_yes_no("Does the phone show the same code?");
+                conn.send(&CtlRequest::PairDecision { approve: ok })?;
+            }
+            CtlEvent::PairDone { device } => {
+                println!("Paired \"{}\" as `{}`.", device.name, device.slug);
+                return Ok(());
+            }
+            CtlEvent::PairRejected => return Err("pairing rejected".into()),
+            CtlEvent::PairExpired => {
+                return Err("pairing code expired; run `bring pair` again".into());
+            }
+            CtlEvent::PairFailed { message } => return Err(format!("pairing failed: {message}")),
+            other => return Err(unexpected(other)),
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<(), String> {
+    let socket = cli.socket.unwrap_or_else(ctl::default_socket_path);
+    let mut conn = Conn::open(&socket)?;
+    match cli.command {
+        Command::Status => {
+            conn.send(&CtlRequest::Status)?;
+            match conn.recv()? {
+                CtlEvent::Status(s) => {
+                    println!("bringd {}  ring {}", s.version, s.ring_id);
+                    println!("Ring dir      {}", s.ring_root);
+                    println!("LAN           {}", s.lan_url);
+                    println!(
+                        "WAN           {}",
+                        s.wan_url.as_deref().unwrap_or("(not configured)")
+                    );
+                    println!("TLS SHA-256   {}", s.tls_cert_sha256);
+                    println!(
+                        "Files         {} ({}), {} awaiting hash",
+                        s.files,
+                        human_bytes(s.bytes),
+                        s.pending_hashes
+                    );
+                    println!("Devices       {} active", s.devices);
+                    println!("Uploads       {} in progress", s.open_uploads);
+                    Ok(())
+                }
+                other => Err(unexpected(other)),
+            }
+        }
+        Command::Devices => {
+            conn.send(&CtlRequest::Devices)?;
+            match conn.recv()? {
+                CtlEvent::Devices { devices } => {
+                    print_devices(&devices);
+                    Ok(())
+                }
+                other => Err(unexpected(other)),
+            }
+        }
+        Command::Revoke { device } => {
+            conn.send(&CtlRequest::Revoke { device })?;
+            match conn.recv()? {
+                CtlEvent::Revoked { device } => {
+                    println!("Revoked \"{}\" ({}).", device.name, device.slug);
+                    Ok(())
+                }
+                other => Err(unexpected(other)),
+            }
+        }
+        Command::Pair => pair(&mut conn),
+    }
+}
+
+fn main() -> ExitCode {
+    match run(Cli::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("bring: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

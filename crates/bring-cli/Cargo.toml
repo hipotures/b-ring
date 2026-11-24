@@ -14,6 +14,9 @@ path = "src/main.rs"
 
 [dependencies]
 bring-core.workspace = true
+clap.workspace = true
+qrcode.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

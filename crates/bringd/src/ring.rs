@@ -1,13 +1,16 @@
 //! Wiring: opens the index, starts the hasher and watcher, runs the initial
 //! scan and exposes the API router.
 
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 
 use axum::Router;
 use tracing::info;
 
 use crate::config::Config;
+use crate::ctl_server::CtlContext;
 use crate::hasher::{self, HashQueue};
+use crate::pairing::{self, Pairing};
 use crate::scanner::{self, RESERVED_DIR};
 use crate::server::{self, AppState};
 use crate::store::{self, Db};
@@ -40,6 +43,8 @@ pub struct Ring {
     pub thumbs: ThumbStore,
     pub uploads: Uploads,
     pub tls: TlsIdentity,
+    pub pairing: Pairing,
+    wan_url: Option<String>,
     stream_key: [u8; 32],
     _watcher: WatcherHandle,
 }
@@ -70,6 +75,15 @@ impl Ring {
         let db = Db::open(&config.db_path())?;
         let ring_id = store::ring_id_hex(&db.lock())?;
         let stream_key: [u8; 32] = bring_core::db::ring_meta_blob(&db.lock(), "stream_key")?;
+        let ring_id_bytes: [u8; 16] = bring_core::db::ring_meta_blob(&db.lock(), "ring_id")?;
+        let pairing = Pairing::new(
+            db.clone(),
+            ring_id_bytes,
+            tls.cert_sha256,
+            advertise_addr(config, config.lan_listen.port()),
+            config.wan_url.clone(),
+            std::time::Duration::from_secs(config.pairing_ttl_secs),
+        );
         let uploads = Uploads::new(root.clone(), staging, db.clone());
         let recovered = uploads::recover(&uploads)?;
         if recovered > 0 {
@@ -104,6 +118,8 @@ impl Ring {
             thumbs,
             uploads,
             tls,
+            pairing,
+            wan_url: config.wan_url.clone(),
             stream_key,
             _watcher: watcher,
         })
@@ -117,7 +133,20 @@ impl Ring {
             uploads: self.uploads.clone(),
             hashq: self.hashq.clone(),
             stream_key: self.stream_key,
+            pairing: self.pairing.clone(),
         })
+    }
+
+    /// Context for the `bring` control socket.
+    pub fn ctl_context(&self) -> CtlContext {
+        CtlContext {
+            db: self.db.clone(),
+            pairing: self.pairing.clone(),
+            ring_id: self.ring_id.clone(),
+            ring_root: self.root.clone(),
+            tls_cert_sha256: self.tls.fingerprint_hex(),
+            wan_url: self.wan_url.clone(),
+        }
     }
 }
 
@@ -137,4 +166,17 @@ fn spawn_cleanup(uploads: Uploads) {
             }
         }
     });
+}
+
+/// The LAN address advertised in pairing payloads.
+pub fn advertise_addr(config: &Config, port: u16) -> SocketAddrV4 {
+    let ip = config
+        .advertise_ip
+        .or(match config.lan_listen {
+            SocketAddr::V4(a) if !a.ip().is_unspecified() => Some(*a.ip()),
+            _ => None,
+        })
+        .or_else(pairing::detect_lan_ip)
+        .unwrap_or(Ipv4Addr::LOCALHOST);
+    SocketAddrV4::new(ip, port)
 }

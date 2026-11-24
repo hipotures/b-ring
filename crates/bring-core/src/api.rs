@@ -181,3 +181,71 @@ pub struct StreamUrlResponse {
     /// Unix seconds after which the URL stops working.
     pub expires_at: i64,
 }
+
+// ---------------------------------------------------------------------------
+// Pairing
+// ---------------------------------------------------------------------------
+
+/// `POST /pair/{pairing_id}/exchange`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairExchangeRequest {
+    /// Hex, 16 bytes, generated once per Moon installation.
+    pub device_uuid: String,
+    pub device_name: String,
+    /// base64url SPAKE2 message (side A).
+    pub spake_msg: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairExchangeResponse {
+    /// base64url SPAKE2 message (side B).
+    pub spake_msg: String,
+    /// base64url HMAC proving the Ring derived the same key.
+    pub ring_confirm: String,
+}
+
+/// `POST /pair/{pairing_id}/confirm`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairConfirmRequest {
+    pub moon_confirm: String,
+}
+
+/// `202` body of `/confirm` and of a pending `/result`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairPending {
+    /// Always `"awaiting_user"`.
+    pub status: String,
+}
+
+/// `200` body of `GET /pair/{pairing_id}/result`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairResultResponse {
+    /// base64url(nonce || ChaCha20-Poly1305 ciphertext of [`PairingResult`]).
+    pub sealed: String,
+}
+
+/// What the Ring hands a newly paired Moon (encrypted inside `sealed`).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingResult {
+    pub device_token: String,
+    pub device_slug: String,
+    /// Hex.
+    pub ring_id: String,
+    /// Hex SHA-256 of the Ring's LAN certificate: the TLS pin.
+    pub tls_cert_sha256: String,
+    pub lan_url: String,
+    pub wan_url: Option<String>,
+}
+
+impl std::fmt::Debug for PairingResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingResult")
+            .field("device_token", &"<redacted>")
+            .field("device_slug", &self.device_slug)
+            .field("ring_id", &self.ring_id)
+            .field("tls_cert_sha256", &self.tls_cert_sha256)
+            .field("lan_url", &self.lan_url)
+            .field("wan_url", &self.wan_url)
+            .finish()
+    }
+}

@@ -1,6 +1,6 @@
 //! `bringd` configuration (`~/.config/bring/bringd.toml`).
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -20,6 +20,12 @@ pub struct Config {
     pub proxy_listen: Option<SocketAddr>,
     /// External HTTPS URL behind the reverse proxy, handed to Moons.
     pub wan_url: Option<String>,
+    /// LAN IPv4 put into pairing payloads; auto-detected if unset.
+    pub advertise_ip: Option<Ipv4Addr>,
+    /// Control socket for `bring`; defaults to `$XDG_RUNTIME_DIR/bring/bringd.sock`.
+    pub ctl_socket: Option<PathBuf>,
+    /// Lifetime of a pairing code.
+    pub pairing_ttl_secs: u64,
     /// Logical folders created on start.
     pub folders: Vec<String>,
     /// How long a path must be quiet before the watcher reports it.
@@ -36,6 +42,9 @@ impl Default for Config {
             lan_listen: SocketAddr::from(([0, 0, 0, 0], 7443)),
             proxy_listen: None,
             wan_url: None,
+            advertise_ip: None,
+            ctl_socket: None,
+            pairing_ttl_secs: 300,
             folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),
@@ -94,6 +103,12 @@ impl Config {
 
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("ring.db")
+    }
+
+    pub fn ctl_socket_path(&self) -> PathBuf {
+        self.ctl_socket
+            .clone()
+            .unwrap_or_else(bring_core::ctl::default_socket_path)
     }
 
     pub fn tls_dir(&self) -> PathBuf {

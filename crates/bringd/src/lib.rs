@@ -4,8 +4,10 @@
 //! integration tests can drive the real services.
 
 pub mod config;
+pub mod ctl_server;
 pub mod devices;
 pub mod hasher;
+pub mod pairing;
 pub mod ring;
 pub mod scanner;
 pub mod serve;

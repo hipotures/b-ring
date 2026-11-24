@@ -1,15 +1,22 @@
 //! Helpers shared by `bringd` integration tests.
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header, request};
+use bringd::serve::{self, Servers};
 use bringd::{Config, Ring, devices};
 use http_body_util::BodyExt;
 use rusqlite::Connection;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::CryptoProvider;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tower::ServiceExt;
@@ -145,4 +152,102 @@ pub async fn send(router: &Router, req: Request<Body>) -> (StatusCode, HeaderMap
 pub async fn get_json<T: DeserializeOwned>(router: &Router, uri: &str) -> (StatusCode, T) {
     let (status, _, body) = send(router, Request::get(uri).body(Body::empty()).unwrap()).await;
     (status, parse(uri, status, &body))
+}
+
+// ---------------------------------------------------------------------------
+// Real listeners + a TLS client that records the server certificate
+// ---------------------------------------------------------------------------
+
+/// Starts the HTTPS LAN listener (and a proxy listener) on loopback.
+pub async fn listen(
+    t: &TestRing,
+) -> (Servers, SocketAddr, SocketAddr, tokio::task::JoinHandle<()>) {
+    let servers = Servers::default();
+    let handles = servers.clone();
+    let (app, tls) = (t.router(), t.ring.tls.clone());
+    let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let task = tokio::spawn(async move {
+        serve::serve(app, &tls, any, Some(any), handles)
+            .await
+            .unwrap();
+    });
+    let lan = servers.lan.listening().await.expect("lan listener");
+    let proxy = servers.proxy.listening().await.expect("proxy listener");
+    (servers, lan, proxy, task)
+}
+
+/// Accepts any certificate but records it, while still verifying the
+/// handshake signature (the server must hold the certificate's key).
+#[derive(Debug)]
+pub struct Capture {
+    pub seen: Arc<Mutex<Option<Vec<u8>>>>,
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for Capture {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        *self.seen.lock().unwrap() = Some(end_entity.to_vec());
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// reqwest is built with `rustls-no-provider`; ignore "already installed".
+pub fn install_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+pub fn capturing_client(seen: Arc<Mutex<Option<Vec<u8>>>>) -> reqwest::Client {
+    install_provider();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let tls = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(Capture { seen, provider }))
+        .with_no_client_auth();
+    reqwest::Client::builder()
+        .use_preconfigured_tls(tls)
+        .build()
+        .unwrap()
 }

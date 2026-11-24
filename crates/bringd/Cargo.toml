@@ -44,6 +44,7 @@ http-body-util.workspace = true
 image.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 tower.workspace = true
 

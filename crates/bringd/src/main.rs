@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use bringd::serve::{self, Servers};
-use bringd::{Config, Ring};
+use bringd::{Config, Ring, ctl_server, ring};
 use tracing::{error, info};
 
 fn usage() -> ! {
@@ -70,11 +70,29 @@ async fn main() -> ExitCode {
         "bringd starting"
     );
 
+    let socket = config.ctl_socket_path();
+    let ctl = match ctl_server::bind(&socket).await {
+        Ok(l) => l,
+        Err(e) => {
+            error!("cannot open control socket {}: {e}", socket.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    tokio::spawn(ctl_server::run(ctl, ring.ctl_context()));
+
     let servers = Servers::default();
     let stopper = servers.clone();
     tokio::spawn(async move {
         shutdown_signal().await;
         stopper.shutdown();
+    });
+    // Advertise the port actually bound (matters for `lan_listen` port 0).
+    let (lan_handle, pairing, cfg) = (servers.lan.clone(), ring.pairing.clone(), config.clone());
+    tokio::spawn(async move {
+        if let Some(addr) = lan_handle.listening().await {
+            pairing.set_advertise(ring::advertise_addr(&cfg, addr.port()));
+            info!(lan_url = %pairing.lan_url(), control = %cfg.ctl_socket_path().display(), "ready");
+        }
     });
     let served = serve::serve(
         ring.router(),
@@ -84,6 +102,7 @@ async fn main() -> ExitCode {
         servers,
     )
     .await;
+    let _ = std::fs::remove_file(&socket);
     if let Err(e) = served {
         error!("{e}");
         return ExitCode::FAILURE;

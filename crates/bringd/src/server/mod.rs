@@ -4,6 +4,7 @@ pub mod auth;
 mod files;
 mod health;
 mod index;
+mod pair;
 mod thumbs;
 mod uploads;
 
@@ -19,6 +20,7 @@ use bring_core::transfer::MAX_CHUNK_SIZE;
 use tracing::error;
 
 use crate::hasher::HashQueue;
+use crate::pairing::Pairing;
 use crate::store::Db;
 use crate::thumbs::ThumbStore;
 use crate::uploads::Uploads;
@@ -34,6 +36,7 @@ pub struct AppState {
     pub hashq: HashQueue,
     /// Key for signed stream URLs (`meta.stream_key`).
     pub stream_key: [u8; 32],
+    pub pairing: Pairing,
 }
 
 /// Builds the API router.
@@ -41,7 +44,11 @@ pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/v1/health", get(health::health))
         // Bearer *or* signed `?st=` token; checked in the handler.
-        .route("/api/v1/files/{id}/content", get(files::content));
+        .route("/api/v1/files/{id}/content", get(files::content))
+        // Authenticated by SPAKE2 + SAS, not by a device token.
+        .route("/api/v1/pair/{id}/exchange", post(pair::exchange))
+        .route("/api/v1/pair/{id}/confirm", post(pair::confirm))
+        .route("/api/v1/pair/{id}/result", get(pair::result));
     let device = Router::new()
         .route("/api/v1/index", get(index::index))
         .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))
