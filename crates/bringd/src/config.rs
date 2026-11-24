@@ -47,7 +47,7 @@ impl Default for Config {
             advertise_ip: None,
             ctl_socket: None,
             pairing_ttl_secs: 300,
-            notifications: true,
+            notifications: false,
             folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),

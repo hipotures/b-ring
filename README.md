@@ -37,7 +37,7 @@ lan_listen  = "0.0.0.0:7443"             # HTTPS (self-signed, pinned by Moons)
 folders     = ["DCIM", "Download", "Inbox"]
 debounce_ms = 2000                       # quiet time before a change is indexed
 ffmpeg      = "ffmpeg"                   # video/HEIC thumbnails (optional)
-notifications = true                     # desktop notification on uploads
+notifications = false                    # desktop notifications on uploads (off by default)
 pairing_ttl_secs = 300
 ```
 
