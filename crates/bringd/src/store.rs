@@ -129,13 +129,16 @@ pub fn guess_mime(path: &RelPath) -> Option<String> {
         .map(|m| m.essence_str().to_owned())
 }
 
-/// Records a file seen on disk. Returns `true` if it needs (re)hashing.
+/// Records a file seen on disk. Returns `true` if it needs (re)hashing,
+/// or a thumbnail it should have but lacks (one that failed right after an
+/// upload is retried by the next scan, e.g. at startup).
 ///
 /// A live row with the same size and mtime is left untouched (no new `seq`).
 pub fn upsert_scanned(conn: &Connection, path: &RelPath, stat: DiskStat) -> Result<bool, DbError> {
     let mime = guess_mime(path);
     match file_by_path(conn, path)? {
-        Some(row) if !row.deleted && row.stat() == stat => Ok(row.blake3.is_none()),
+        Some(row) if !row.deleted && row.stat() == stat => Ok(row.blake3.is_none()
+            || (row.thumb.is_none() && crate::thumbs::is_thumbable(row.mime.as_deref()))),
         Some(row) => {
             let seq = db::next_seq(conn)?;
             // A resurrected tombstone is a new desktop file, not the old upload.
@@ -307,8 +310,15 @@ mod tests {
         );
 
         let h = Blake3Hash([7; 32]);
+        // Hashed, but the thumbnail failed: the next scan retries it.
         assert!(set_hash(&c, &p("DCIM/a.jpg"), S1, h, None).unwrap());
+        assert!(upsert_scanned(&c, &p("DCIM/a.jpg"), S1).unwrap());
+        assert!(set_hash(&c, &p("DCIM/a.jpg"), S1, h, Some(Blake3Hash([8; 32]))).unwrap());
         assert!(!upsert_scanned(&c, &p("DCIM/a.jpg"), S1).unwrap());
+        // Nothing to thumbnail: hashed is done.
+        upsert_scanned(&c, &p("Docs/a.txt"), S1).unwrap();
+        assert!(set_hash(&c, &p("Docs/a.txt"), S1, h, None).unwrap());
+        assert!(!upsert_scanned(&c, &p("Docs/a.txt"), S1).unwrap());
 
         let s2 = DiskStat {
             size: 11,
