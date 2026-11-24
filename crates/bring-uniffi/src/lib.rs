@@ -181,6 +181,12 @@ struct Clients {
     wan: Option<Client>,
 }
 
+/// Budget for the LAN `/health` probe. A cold probe (new TCP connection,
+/// TLS handshake, first use of the crypto provider) on a phone whose Wi-Fi
+/// is in power save can take well over 500 ms even at home; a missed probe
+/// skips background sync, so the budget is generous.
+const LAN_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
+
 /// The Moon: local index, sync engine and Ring client.
 #[derive(uniffi::Object)]
 pub struct Moon {
@@ -387,11 +393,12 @@ impl Moon {
         self.probe(Duration::from_millis(timeout_ms.into()))
     }
 
-    /// LAN detection (§4): on unmetered Wi-Fi, try the LAN listener (500 ms);
+    /// LAN detection (§4): on unmetered Wi-Fi, try the LAN listener
+    /// ([`LAN_PROBE_TIMEOUT`]);
     /// otherwise use the WAN route if there is one. Sets and returns the
     /// route, or `None` when the Ring is unreachable from here.
     pub fn select_route(&self, unmetered_wifi: bool) -> Result<Option<Route>, MoonError> {
-        let route = if unmetered_wifi && self.probe(Duration::from_millis(500))? {
+        let route = if unmetered_wifi && self.probe(LAN_PROBE_TIMEOUT)? {
             Some(Route::Lan)
         } else if store::ring(&self.db())?
             .ok_or(MoonError::NotPaired)?

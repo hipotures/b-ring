@@ -435,7 +435,7 @@ connection cancels the session.
 - **LAN detection without location permissions.** No SSID checks and no
   `ACCESS_FINE_LOCATION` / `ACCESS_BACKGROUND_LOCATION`. The app is on LAN when:
   1. the active network has `TRANSPORT_WIFI` and `NET_CAPABILITY_NOT_METERED`, and
-  2. `GET {lan_url}/health` succeeds within 500 ms over the pinned TLS client and
+  2. `GET {lan_url}/health` succeeds within 1.5 s over the pinned TLS client and
      returns the expected `ring_id`.
 
   Otherwise traffic goes to `wan_url`.
