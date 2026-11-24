@@ -1,12 +1,10 @@
 package io.github.hipotures.bring.sync
 
-import android.app.NotificationManager
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.Data
-import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import io.github.hipotures.bring.bring
@@ -22,12 +20,12 @@ import kotlinx.coroutines.withContext
 
 /**
  * One sync round: route selection (§4), then `run_sync` (index → scan →
- * outbox → index) as a foreground `dataSync` job so long uploads survive.
+ * outbox → index). No notifications: the app's top bar shows an upload in
+ * progress, the history lists finished rounds. Without a foreground service
+ * a background round may be stopped after about 10 minutes; uploads resume
+ * chunk by chunk in the next round.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-
-    override suspend fun getForegroundInfo(): ForegroundInfo =
-        Notifications.syncForeground(applicationContext, null)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val bring = applicationContext.bring
@@ -48,14 +46,6 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             if (trigger != Trigger.MANUAL) return@withContext Result.success()
             record(SyncRound(System.currentTimeMillis(), 0, true, route?.name ?: "", 0, 0, 0, 0, 0, 0, 0, why, emptyList()))
             return@withContext failure(why)
-        }
-
-        try {
-            setForeground(getForegroundInfo())
-        } catch (e: Exception) {
-            // Android 12+ may refuse a foreground start from the background;
-            // the round still runs, as an ordinary (time-limited) worker.
-            Log.w(TAG, "running without a foreground service: $e")
         }
 
         val started = SystemClock.elapsedRealtime()
@@ -102,15 +92,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
     }
 
-    /** Log the round and, if anything happened, say so in a notification. */
+    /** Log the round for the history screen. */
     private fun record(round: SyncRound) {
         applicationContext.bring.syncLog.add(round)
-        if (round.changed) {
-            runCatching {
-                applicationContext.getSystemService(NotificationManager::class.java)
-                    .notify(Notifications.ID_DONE, Notifications.done(applicationContext, round))
-            }
-        }
     }
 
     private fun failure(message: String) = Result.failure(workDataOf(KEY_ERROR to message))
@@ -124,8 +108,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     )
 
     /**
-     * Upload progress → WorkManager progress + the foreground notification,
-     * at most once a second: with many small files the engine reports
+     * Upload progress → WorkManager progress (the app's top bar), at most
+     * once a second: with many small files the engine reports
      * hundreds of files per second, far too fast to read.
      */
     private inner class Progress : TransferListener {
@@ -134,7 +118,6 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private var currentSent = 0L
         private var doneBytes = 0L
         private var files = 0
-        private val nm = applicationContext.getSystemService(NotificationManager::class.java)
 
         /** Ring paths fully sent in this round (the last [SyncRound.MAX_FILES]). */
         val completed = ArrayDeque<String>()
@@ -159,17 +142,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             val now = SystemClock.elapsedRealtime()
             if (now - lastAt < 1_000) return
             lastAt = now
-            val p = Notifications.Upload(ringPath, sent, total, files, doneBytes + sent)
             setProgressAsync(
                 workDataOf(
-                    KEY_PATH to p.path,
-                    KEY_SENT to p.sent,
-                    KEY_TOTAL to p.total,
-                    KEY_FILES to p.files,
-                    KEY_BYTES to p.bytes,
+                    KEY_PATH to ringPath,
+                    KEY_SENT to sent,
+                    KEY_TOTAL to total,
+                    KEY_FILES to files,
+                    KEY_BYTES to doneBytes + sent,
                 ),
             )
-            runCatching { nm.notify(Notifications.ID_SYNC, Notifications.sync(applicationContext, p)) }
         }
     }
 

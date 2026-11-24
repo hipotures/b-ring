@@ -1,12 +1,6 @@
 package io.github.hipotures.bring.settings
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -37,7 +31,6 @@ import io.github.hipotures.bring.ui.StatusPlate
 import io.github.hipotures.bring.ui.ThemeChoice
 import themechanics.compose.Tm
 import themechanics.compose.TmDimens
-import themechanics.compose.TmTone
 import themechanics.compose.tmHardShadow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -53,7 +46,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
@@ -64,7 +56,6 @@ import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.KeyValue
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.SharpButton
-import io.github.hipotures.bring.ui.Tag
 
 private val MIB: ULong = 1024UL * 1024UL
 
@@ -143,7 +134,6 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                     }
                 })
             }
-            NotificationRow()
         }
 
         Panel(title = "Watched folders") {
@@ -280,25 +270,5 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             },
             dismissButton = { SharpButton("Cancel", onClick = { confirmForget = false }) },
         )
-    }
-}
-
-/** POST_NOTIFICATIONS (API 33+): upload progress and the sync service. */
-@SuppressLint("InlinedApi") // the request button only shows on API 33+
-@Composable
-private fun NotificationRow() {
-    val context = LocalContext.current
-    fun granted() = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    var ok by remember { mutableStateOf(granted()) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok = it }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("Notifications", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        if (ok) {
-            Tag("On", TmTone.Success)
-        } else {
-            SharpButton("Allow", onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) })
-        }
     }
 }

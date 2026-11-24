@@ -439,8 +439,11 @@ connection cancels the session.
      returns the expected `ring_id`.
 
   Otherwise traffic goes to `wan_url`.
-- **Background sync** (WorkManager constraint `UNMETERED` + Foreground Service
-  for transfers) runs only when the LAN check passes. A new file starts a round
+- **Background sync** (WorkManager constraint `UNMETERED`, no foreground
+  service and no notifications) runs only when the LAN check passes. While a
+  file uploads, a blinking upload mark in the app's top bar says so; finished
+  rounds are listed in the in-app history. A background round may be stopped
+  after about 10 minutes; uploads resume chunk by chunk in the next round. A new file starts a round
   within seconds (MediaStore content trigger); a 15-minute periodic round and
   opening the app catch everything else. Over cellular, sync runs
   only when the user starts it manually.

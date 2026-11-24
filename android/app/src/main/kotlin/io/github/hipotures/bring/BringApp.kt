@@ -1,6 +1,7 @@
 package io.github.hipotures.bring
 
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -10,7 +11,6 @@ import io.github.hipotures.bring.media.RingImageFetcher
 import io.github.hipotures.bring.media.RingImageKeyer
 import io.github.hipotures.bring.media.RingThumbFetcher
 import io.github.hipotures.bring.media.RingThumbKeyer
-import io.github.hipotures.bring.sync.Notifications
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +38,11 @@ class BringApp : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
-        Notifications.createChannels(this)
+        // Sync no longer posts notifications; remove the channel older builds made.
+        getSystemService(NotificationManager::class.java)?.run {
+            cancelAll()
+            deleteNotificationChannel("sync")
+        }
     }
 
     /** Coil: Ring thumbnails and images go through the engine's pinned client. */

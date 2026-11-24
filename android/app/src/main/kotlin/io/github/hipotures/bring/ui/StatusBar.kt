@@ -1,6 +1,19 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.animateColor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,13 +33,11 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,9 +62,11 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title,
- * route plate and 48 dp icon actions, then what sync is doing: progress
- * while a round runs, otherwise the last round's result as a status plate.
+ * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title, a
+ * blinking upload mark while a file is on its way to the Ring, route plate
+ * and 48 dp icon actions. On the home screen a second line holds the last
+ * round's result. Sync never changes the strip's height, so nothing below
+ * it jumps.
  */
 @Composable
 fun TopStrip(
@@ -82,6 +95,7 @@ fun TopStrip(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = if (onBack == null) TmDimens.space3 else TmDimens.space1),
             )
+            if (sync.running && sync.path != null) UploadMark(sync, onActivity)
             RoutePlate(route)
             if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
             if (onActivity != null) ActionIcon(Icons.AutoMirrored.Outlined.List, "Sync activity", onActivity)
@@ -89,7 +103,6 @@ fun TopStrip(
             if (onSync == null && onActivity == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
         }
         when {
-            sync.running -> SyncBlock(sync)
             onSync == null -> {}
             // A later check found nothing new: say that, not the old news.
             lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
@@ -138,58 +151,39 @@ private fun ResultRow(text: String, mark: PlateMark, at: Long, onClick: (() -> U
 }
 
 /**
- * A running round. The first line (file count, bytes) is the stable one;
- * the current file name below changes at most once a second.
+ * Square with an up arrow (the shape of Android's upload icon), pulsing
+ * between `text` and `info` while a file uploads. Tapping it opens the
+ * history where the strip has a history action.
  */
 @Composable
-private fun SyncBlock(sync: SyncUi) {
+private fun UploadMark(sync: SyncUi, onClick: (() -> Unit)?) {
     val c = Tm.colors
-    val path = sync.path
-    Column(
+    val tint by rememberInfiniteTransition(label = "upload").animateColor(
+        initialValue = c.text,
+        targetValue = c.info,
+        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
+        label = "tint",
+    )
+    val what = "Uploading ${sync.files} ${if (sync.files == 1) "file" else "files"}, ${formatBytes(sync.bytes)}"
+    Box(
         Modifier
-            .fillMaxWidth()
-            .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
-        verticalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
+            .size(48.dp)
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .semantics { contentDescription = what },
+        contentAlignment = Alignment.Center,
     ) {
-        if (path != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2), verticalAlignment = Alignment.CenterVertically) {
-                Text("Uploading", style = MaterialTheme.typography.bodyMedium, color = c.text)
-                Text(
-                    "${sync.files} ${if (sync.files == 1) "file" else "files"} · ${formatBytes(sync.bytes)}",
-                    style = Tm.text.numeric,
-                    color = c.text,
-                )
-            }
-        } else {
-            Text("Checking the Ring and local folders…", style = MaterialTheme.typography.bodyMedium, color = c.text)
-        }
-        // A determinate bar only for files big enough to watch; for small
-        // ones it would just flicker.
-        val bar = Modifier.fillMaxWidth().height(4.dp)
-        if (path != null && sync.total >= BIG_FILE) {
-            LinearProgressIndicator(
-                progress = { (sync.sent.toFloat() / sync.total).coerceIn(0f, 1f) },
-                modifier = bar,
-                color = c.accent,
-                trackColor = c.line3,
-                strokeCap = StrokeCap.Butt,
-                gapSize = 0.dp,
-                drawStopIndicator = {},
-            )
-        } else {
-            BusyBar()
-        }
-        if (path != null) {
-            Text(
-                path.substringAfterLast('/') +
-                    if (sync.total >= BIG_FILE) " · ${formatBytes(sync.sent)} / ${formatBytes(sync.total)}" else "",
-                style = Tm.text.code,
-                color = c.text2,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Icon(UploadGlyph, null, Modifier.size(TmDimens.iconLg), tint = tint)
     }
 }
 
-private const val BIG_FILE = 4L * 1024 * 1024
+private val UploadGlyph: ImageVector by lazy {
+    ImageVector.Builder("upload", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
+            moveTo(4f, 4f); lineTo(20f, 4f); lineTo(20f, 20f); lineTo(4f, 20f); close()
+        }
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
+            moveTo(12f, 17f); lineTo(12f, 8f)
+            moveTo(8f, 12f); lineTo(12f, 8f); lineTo(16f, 12f)
+        }
+    }.build()
+}
