@@ -3,9 +3,9 @@ package io.github.hipotures.bring.home
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.SharpButton
+import themechanics.compose.Tm
 
 /** Shown until storage access is granted and something is watched. */
 @Composable
@@ -21,7 +21,7 @@ fun SetupPanel(storageGranted: Boolean, folderCount: Int, onOpenSettings: () -> 
         Text(
             "Files on the Ring are listed either way.",
             style = MaterialTheme.typography.bodyMedium,
-            color = BringTheme.colors.dim,
+            color = Tm.colors.text2,
         )
         SharpButton("Open settings", primary = true, onClick = onOpenSettings)
     }

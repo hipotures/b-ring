@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,8 +26,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.SyncUi
@@ -33,18 +36,24 @@ import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncRound
 import io.github.hipotures.bring.sync.roundTitle
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
 
+/** The route as a status plate: connected is a quiet dot, offline warns. */
 @Composable
-fun routeColor(route: RouteStatus): Color = when (route) {
-    RouteStatus.LAN -> BringTheme.colors.synced
-    RouteStatus.WAN -> BringTheme.colors.remote
-    RouteStatus.OFFLINE -> BringTheme.colors.warn
-    RouteStatus.UNKNOWN -> BringTheme.colors.dim
+fun RoutePlate(route: RouteStatus, small: Boolean = true) {
+    val mark = when (route) {
+        RouteStatus.LAN, RouteStatus.WAN -> PlateMark.ACTIVE
+        RouteStatus.OFFLINE -> PlateMark.WARNING
+        RouteStatus.UNKNOWN -> PlateMark.PENDING
+    }
+    StatusPlate(route.label, mark, small = small)
 }
 
 /**
- * App bar: title, route, actions (48dp targets), then what sync is doing:
- * progress while a round runs, otherwise the last round's outcome.
+ * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title,
+ * route plate and 48 dp icon actions, then what sync is doing: progress
+ * while a round runs, otherwise the last round's result as a status plate.
  */
 @Composable
 fun TopStrip(
@@ -57,60 +66,66 @@ fun TopStrip(
     onSettings: (() -> Unit)? = null,
     lastRound: SyncRound? = null,
 ) {
-    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer)) {
+    val c = Tm.colors
+    Column(Modifier.fillMaxWidth().background(c.chrome)) {
         Row(
-            Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().height(56.dp).padding(horizontal = TmDimens.space1),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (onBack != null) {
-                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            }
+            if (onBack != null) ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onBack)
             Text(
                 title,
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = if (title == "B-Ring") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                color = c.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = if (onBack == null) 12.dp else 4.dp),
+                modifier = Modifier.weight(1f).padding(start = if (onBack == null) TmDimens.space3 else TmDimens.space1),
             )
-            Tag(route.label, routeColor(route))
-            if (onSync != null) {
-                IconButton(onSync, enabled = !sync.running) { Icon(Icons.Filled.Refresh, "Sync now") }
-            }
-            if (onActivity != null) {
-                IconButton(onActivity) { Icon(Icons.AutoMirrored.Filled.List, "Sync activity") }
-            }
-            if (onSettings != null) {
-                IconButton(onSettings) { Icon(Icons.Filled.Settings, "Settings") }
-            }
+            RoutePlate(route)
+            if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
+            if (onActivity != null) ActionIcon(Icons.AutoMirrored.Outlined.List, "Sync activity", onActivity)
+            if (onSettings != null) ActionIcon(Icons.Outlined.Settings, "Settings", onSettings)
+            if (onSync == null && onActivity == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
         }
         when {
             sync.running -> SyncBlock(sync)
             lastRound != null && onSync != null -> LastRound(lastRound, onActivity)
         }
-        HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
+        HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
     }
 }
 
-/** "Uploaded 12 files (34 MiB) · Today 19:24", tappable to the history. */
+/** Outlined icon, 20 dp, `text2`, in a 48 dp target. */
+@Composable
+fun ActionIcon(icon: ImageVector, description: String, onClick: () -> Unit, enabled: Boolean = true) {
+    IconButton(onClick, enabled = enabled) {
+        Icon(
+            icon,
+            description,
+            Modifier.size(TmDimens.iconLg),
+            tint = if (enabled) Tm.colors.text2 else Tm.colors.textDisabled,
+        )
+    }
+}
+
+/** [✓ Uploaded 12 files (34 MiB)]  Today 19:24 — tappable to the history. */
 @Composable
 private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) {
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 40.dp)
             .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = TmDimens.space3, vertical = TmDimens.space1),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TmDimens.space3),
     ) {
-        Text(
-            "${roundTitle(r)} · ${formatWhen(r.endedAt)}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (r.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        StatusPlate(
+            roundTitle(r),
+            if (r.error != null) PlateMark.ERROR else PlateMark.COMPLETE,
+            modifier = Modifier.weight(1f, fill = false),
         )
+        Text(formatWhen(r.endedAt), style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
     }
 }
 
@@ -120,36 +135,48 @@ private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) {
  */
 @Composable
 private fun SyncBlock(sync: SyncUi) {
+    val c = Tm.colors
     val path = sync.path
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
+        verticalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
     ) {
-        Text(
-            if (path != null) "Uploading · ${sync.files} files · ${formatBytes(sync.bytes)}" else "Checking the Ring and local folders…",
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-        )
+        if (path != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2), verticalAlignment = Alignment.CenterVertically) {
+                Text("Uploading", style = MaterialTheme.typography.bodyMedium, color = c.text)
+                Text(
+                    "${sync.files} ${if (sync.files == 1) "file" else "files"} · ${formatBytes(sync.bytes)}",
+                    style = Tm.text.numeric,
+                    color = c.text,
+                )
+            }
+        } else {
+            Text("Checking the Ring and local folders…", style = MaterialTheme.typography.bodyMedium, color = c.text)
+        }
         // A determinate bar only for files big enough to watch; for small
         // ones it would just flicker.
+        val bar = Modifier.fillMaxWidth().height(4.dp)
         if (path != null && sync.total >= BIG_FILE) {
             LinearProgressIndicator(
                 progress = { (sync.sent.toFloat() / sync.total).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(4.dp),
+                modifier = bar,
+                color = c.accent,
+                trackColor = c.line3,
+                strokeCap = StrokeCap.Butt,
                 gapSize = 0.dp,
                 drawStopIndicator = {},
             )
         } else {
-            LinearProgressIndicator(Modifier.fillMaxWidth().height(4.dp), gapSize = 0.dp)
+            BusyBar()
         }
         if (path != null) {
             Text(
                 path.substringAfterLast('/') +
                     if (sync.total >= BIG_FILE) " · ${formatBytes(sync.sent)} / ${formatBytes(sync.total)}" else "",
-                style = MetaStyle,
-                color = BringTheme.colors.dim,
+                style = Tm.text.code,
+                color = c.text2,
                 maxLines = 1,
                 overflow = TextOverflow.MiddleEllipsis,
             )

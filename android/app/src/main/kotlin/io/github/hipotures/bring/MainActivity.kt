@@ -1,18 +1,17 @@
 package io.github.hipotures.bring
 
 import android.content.Intent
-import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,6 +36,7 @@ import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.TopStrip
 import io.github.hipotures.bring.viewer.ViewerScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import themechanics.compose.Tm
 
 class MainActivity : ComponentActivity() {
     /** Set when opened from the "sync finished" notification. */
@@ -45,19 +47,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         openActivity.value = intent?.getBooleanExtra(EXTRA_ACTIVITY, false) == true
         setContent {
-            val dark by bring.prefs.darkTheme.collectAsStateWithLifecycle()
-            // System bar icons must contrast with the app's own background.
-            LaunchedEffect(dark) {
-                val bars = if (dark) {
-                    SystemBarStyle.dark(AndroidColor.TRANSPARENT)
-                } else {
-                    SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+            val theme by bring.prefs.theme.collectAsStateWithLifecycle()
+            BringTheme(theme) {
+                val c = Tm.colors
+                // System bar icons must contrast with the app shell (chrome).
+                LaunchedEffect(c) {
+                    val bars = if (c.isDark) {
+                        SystemBarStyle.dark(c.chrome.toArgb())
+                    } else {
+                        SystemBarStyle.light(c.chrome.toArgb(), c.text.toArgb())
+                    }
+                    enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
                 }
-                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-            }
-            BringTheme(dark) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Box(Modifier.safeDrawingPadding()) { App(openActivity) }
+                // Behind the system bars: the shell color; the page is canvas.
+                Surface(Modifier.fillMaxSize(), color = c.chrome, tonalElevation = 0.dp, shadowElevation = 0.dp) {
+                    Box(Modifier.safeDrawingPadding().fillMaxSize().background(c.canvas)) { App(openActivity) }
                 }
             }
         }

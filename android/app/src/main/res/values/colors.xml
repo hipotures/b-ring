@@ -1,0 +1,10 @@
+<resources>
+    <!-- The Mechanics, Light theme, for views outside Compose (ZXing scanner).
+         Values from TmColors.kt; Coffee cannot be known before Compose runs. -->
+    <color name="tm_scanner_frame">#FF2B312A</color>            <!-- line1 -->
+    <color name="zxing_viewfinder_laser">#FF44622A</color>      <!-- accent -->
+    <color name="zxing_possible_result_points">#C044622A</color>
+    <color name="zxing_viewfinder_mask">#99DCD9CF</color>       <!-- canvas, 60% -->
+    <color name="zxing_result_view">#B0DCD9CF</color>
+    <color name="zxing_status_text">#FF22271F</color>           <!-- text -->
+</resources>

@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -55,6 +56,8 @@ import io.github.hipotures.bring.ui.badgesFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
 import java.io.File
 
 /** One file: media on top, details and actions below. */
@@ -72,7 +75,7 @@ fun ViewerScreen(entryId: Long, route: RouteStatus) {
     }
     val e = entry
     if (e == null) {
-        error?.let { Box(Modifier.padding(12.dp)) { ErrorLine(it) } }
+        error?.let { Box(Modifier.padding(TmDimens.panelPad)) { ErrorLine(it) } }
         return
     }
     val name = e.ringPath.substringAfterLast('/')
@@ -119,7 +122,7 @@ private fun ZoomableImage(model: Any) {
                     translationY = offset.y
                 },
         )
-        if (loading) CircularProgressIndicator()
+        if (loading) CircularProgressIndicator(color = Tm.colors.accent, trackColor = Tm.colors.line3, strokeCap = StrokeCap.Butt)
     }
 }
 
@@ -135,9 +138,9 @@ private fun Details(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(12.dp)) {
+    Column(modifier.verticalScroll(rememberScrollState()).padding(TmDimens.panelPad)) {
         Panel(title = name) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
                 badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
             }
             KeyValue("On the Ring", e.ringPath)
@@ -145,10 +148,10 @@ private fun Details(
             KeyValue("Size", "${formatBytes(e.size)} (${e.size} B)")
             KeyValue("Modified", formatMtime(e.mtimeNs))
             KeyValue("Type", e.mime ?: extensionOf(name).ifEmpty { "?" })
-            e.blake3?.let { KeyValue("BLAKE3", it.take(16) + "…", code = true) }
+            e.blake3?.let { KeyValue("BLAKE3", it.take(16) + "…") }
             e.lastError?.let { KeyValue("Error", it) }
             if (e.suppressed) KeyValue("Note", "Held: removed on the Ring, never uploaded again")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
                 if (local != null) {
                     SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })
                 }

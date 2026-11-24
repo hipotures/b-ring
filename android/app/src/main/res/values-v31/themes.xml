@@ -1,10 +1,9 @@
 <resources>
-    <!-- Android 12+ splash: the app's dark background, not a white flash. -->
-    <style name="Theme.Bring" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#FF0B0D10</item>
-        <item name="android:statusBarColor">#FF0B0D10</item>
-        <item name="android:navigationBarColor">#FF0B0D10</item>
-        <item name="android:windowSplashScreenBackground">#FF0B0D10</item>
+    <!-- Android 12+ splash: The Mechanics Light canvas (values-night-v31: Dark).
+         The splash runs before Compose, so it cannot know about Coffee. -->
+    <style name="Theme.Bring" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFDCD9CF</item>
+        <item name="android:windowSplashScreenBackground">#DCD9CF</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher</item>
     </style>
 </resources>

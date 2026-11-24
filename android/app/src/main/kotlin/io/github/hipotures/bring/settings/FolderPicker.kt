@@ -21,13 +21,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -37,21 +39,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import io.github.hipotures.bring.storage.subfolders
 import io.github.hipotures.bring.storage.volumes
-import io.github.hipotures.bring.ui.BringTheme
+import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.FolderGlyph
-import io.github.hipotures.bring.ui.Hairline
-import io.github.hipotures.bring.ui.MetaStyle
-import io.github.hipotures.bring.ui.Sharp
+import io.github.hipotures.bring.ui.RowDivider
+import io.github.hipotures.bring.ui.Segmented
 import io.github.hipotures.bring.ui.SharpButton
 import io.github.hipotures.bring.ui.Tag
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -74,38 +80,51 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
         value = withContext(Dispatchers.IO) { subfolders(dir) }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        // The dialog has its own window: match the system bar icons to the theme.
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val dark = Tm.colors.isDark
+        SideEffect {
+            window?.let {
+                WindowCompat.getInsetsController(it, it.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
         Column(
             Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .safeDrawingPadding(),
+                .background(Tm.colors.chrome)
+                .safeDrawingPadding()
+                .background(Tm.colors.canvas),
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .height(60.dp)
-                    .padding(start = 16.dp, end = 4.dp),
+                    .background(Tm.colors.head1)
+                    .height(56.dp)
+                    .padding(start = TmDimens.regionPad, end = TmDimens.space1),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Choose folder", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                IconButton(onDismiss) { Icon(Icons.Filled.Close, "Close") }
+                Text(
+                    "Choose folder",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Tm.colors.text,
+                    modifier = Modifier.weight(1f),
+                )
+                ActionIcon(Icons.Outlined.Close, "Close", onDismiss)
             }
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
+            HorizontalDivider(thickness = TmDimens.bw1, color = Tm.colors.line1)
 
             if (vols.size > 1) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    vols.forEach { v ->
-                        SharpButton(v.label, primary = v == volume, onClick = { path = v.root.path })
-                    }
-                }
+                Segmented(
+                    options = vols,
+                    selected = volume,
+                    onSelect = { path = it.root.path },
+                    label = { it.label },
+                    modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
+                )
             }
 
             // Breadcrumbs: volume / a / b, each tappable.
@@ -114,7 +133,7 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                 Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = TmDimens.space1),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Crumb(volume.label, current = atRoot) { path = volume.root.path }
@@ -123,18 +142,18 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                     rel.split('/').forEach { part ->
                         acc = "$acc/$part"
                         val target = acc
-                        Text("›", style = MaterialTheme.typography.bodyLarge, color = BringTheme.colors.dim)
+                        Text("/", style = Tm.text.code, color = Tm.colors.text3)
                         Crumb(part, current = target == path) { path = target }
                     }
                 }
             }
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
 
             LazyColumn(Modifier.weight(1f)) {
                 if (!atRoot) {
                     item {
-                        DirRow("Up one level", note = "up") { path = dir.parent ?: volume.root.path }
-                        HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outlineVariant)
+                        DirRow("Up one level", up = true) { path = dir.parent ?: volume.root.path }
+                        RowDivider()
                     }
                 }
                 val list = children
@@ -143,20 +162,20 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                     list.isEmpty() -> item { Note("No subfolders.") }
                     else -> items(list, key = { it.path }) { f ->
                         DirRow(f.name, watched = f.path in watched) { path = f.path }
-                        HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outlineVariant)
+                        RowDivider()
                     }
                 }
             }
 
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
+            HorizontalDivider(thickness = TmDimens.bw1, color = Tm.colors.line1)
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .background(Tm.colors.chrome)
+                    .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
+                verticalArrangement = Arrangement.spacedBy(TmDimens.space1),
             ) {
-                Text(path, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
+                Text(path, style = Tm.text.code, color = Tm.colors.text2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val already = path in watched
                 SharpButton(
                     when {
@@ -178,40 +197,48 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
 private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
     Text(
         text,
-        style = MaterialTheme.typography.bodyLarge,
+        style = MaterialTheme.typography.bodyMedium,
         fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (current) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary,
+        color = if (current) Tm.colors.text else Tm.colors.link,
         modifier = Modifier
             .clickable(enabled = !current, onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 8.dp),
+            .padding(vertical = 14.dp, horizontal = TmDimens.space2),
     )
 }
 
 @Composable
-private fun DirRow(name: String, note: String? = null, watched: Boolean = false, onClick: () -> Unit) {
+private fun DirRow(name: String, up: Boolean = false, watched: Boolean = false, onClick: () -> Unit) {
+    val c = Tm.colors
     Row(
         Modifier
             .fillMaxWidth()
+            .background(c.surface)
             .clickable(onClick = onClick)
             .heightIn(min = 56.dp)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (note == "up") {
-            Text("↑", fontSize = 22.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(28.dp))
-        } else {
-            Icon(FolderGlyph, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-        }
-        Spacer(Modifier.width(14.dp))
+        Icon(
+            if (up) Icons.Outlined.KeyboardArrowUp else FolderGlyph,
+            null,
+            Modifier.size(TmDimens.iconLg),
+            tint = c.text2,
+        )
+        Spacer(Modifier.width(TmDimens.space4))
         Text(
             name,
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.MiddleEllipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = c.text,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (watched) Tag("WATCHED", BringTheme.colors.synced)
-        Text(" ›", fontSize = 22.sp, color = BringTheme.colors.dim)
+        if (watched) {
+            Tag("Watched", TmTone.Success)
+            Spacer(Modifier.width(TmDimens.space2))
+        }
+        if (!up) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, Modifier.size(TmDimens.iconLg), tint = c.text3)
     }
 }
 
@@ -220,7 +247,7 @@ private fun Note(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
-        color = BringTheme.colors.dim,
-        modifier = Modifier.padding(16.dp),
+        color = Tm.colors.text2,
+        modifier = Modifier.padding(TmDimens.regionPad),
     )
 }

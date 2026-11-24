@@ -14,6 +14,7 @@ import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.WatchedFolder
 import io.github.hipotures.bring.storage.StorageAccess
+import io.github.hipotures.bring.ui.ThemeChoice
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncScheduler
 import io.github.hipotures.bring.sync.SyncWorker
@@ -251,7 +252,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         null
     }
 
-    fun setDarkTheme(dark: Boolean) = bring.prefs.setDarkTheme(dark)
+    fun setTheme(choice: ThemeChoice) = bring.prefs.setTheme(choice)
 
     /** Forgets the Ring and its index; local files are not touched. */
     fun forget() = action {

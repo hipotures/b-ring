@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
@@ -24,6 +25,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.describe
@@ -32,6 +34,7 @@ import io.github.hipotures.bring.net.PinnedTls
 import io.github.hipotures.bring.ui.ErrorLine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import themechanics.compose.Tm
 import java.io.File
 
 /**
@@ -68,8 +71,21 @@ fun MediaPlayer(entry: Entry, local: File?, modifier: Modifier = Modifier) {
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { player?.pause() }
 
     error?.let { ErrorLine(it) }
+    // Media3's controller is a View: only the time bar takes the theme's colors.
+    val c = Tm.colors
     AndroidView(
-        factory = { PlayerView(it).apply { setShowNextButton(false); setShowPreviousButton(false) } },
+        factory = {
+            PlayerView(it).apply {
+                setShowNextButton(false)
+                setShowPreviousButton(false)
+                findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
+                    setPlayedColor(c.accent.toArgb())
+                    setScrubberColor(c.accent.toArgb())
+                    setBufferedColor(c.line2.toArgb())
+                    setUnplayedColor(c.line3.toArgb())
+                }
+            }
+        },
         update = { it.player = player },
         modifier = modifier.fillMaxSize(),
     )

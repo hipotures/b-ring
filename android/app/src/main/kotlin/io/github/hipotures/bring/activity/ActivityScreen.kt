@@ -1,5 +1,6 @@
 package io.github.hipotures.bring.activity
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,86 +21,102 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.formatDuration
 import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.SyncRound
 import io.github.hipotures.bring.sync.roundDetail
 import io.github.hipotures.bring.sync.roundTitle
-import io.github.hipotures.bring.ui.BringTheme
-import io.github.hipotures.bring.ui.Hairline
-import io.github.hipotures.bring.ui.MetaStyle
+import io.github.hipotures.bring.ui.RowDivider
 import io.github.hipotures.bring.ui.Tag
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
 
-/** Sync history: one row per round, newest first; tap a row for its files. */
+/** Sync history: one record per round, newest first; tap a record for its files. */
 @Composable
 fun ActivityScreen(rounds: List<SyncRound>, lastChecked: Long) {
+    val c = Tm.colors
     var open by rememberSaveable { mutableStateOf<Long?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
-            Text(
-                if (lastChecked > 0) "Last check: ${formatWhen(lastChecked)}" else "No sync yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = BringTheme.colors.dim,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            )
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
+            Row(
+                Modifier.padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space3),
+                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("LAST CHECK", style = Tm.text.eyebrow, color = c.text2)
+                Text(
+                    if (lastChecked > 0) formatWhen(lastChecked) else "never",
+                    style = Tm.text.numeric,
+                    color = c.text,
+                )
+            }
+            HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
         if (rounds.isEmpty()) {
             item {
                 Text(
                     "Rounds that upload or receive something show up here. Background checks that find nothing new are not listed.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = BringTheme.colors.dim,
-                    modifier = Modifier.padding(16.dp),
+                    color = c.text2,
+                    modifier = Modifier.padding(TmDimens.regionPad),
                 )
             }
         }
         items(rounds, key = { it.endedAt }) { r ->
             RoundRow(r, expanded = open == r.endedAt) { open = if (open == r.endedAt) null else r.endedAt }
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outlineVariant)
+            RowDivider()
         }
     }
 }
 
 @Composable
 private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
-    val c = BringTheme.colors
+    val c = Tm.colors
     Column(
         Modifier
             .fillMaxWidth()
+            .background(c.surface)
             .clickable(enabled = r.files.isNotEmpty(), onClick = onToggle)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space3),
+        verticalArrangement = Arrangement.spacedBy(TmDimens.space1),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
             Text(
                 roundTitle(r),
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (r.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = c.text,
                 modifier = Modifier.weight(1f),
             )
-            if (r.route.isNotEmpty()) Tag(r.route, if (r.route == "LAN") c.synced else c.remote)
+            if (r.error != null) Tag("Failed", TmTone.Danger)
         }
-        Text(
-            roundDetail(r),
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (r.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            "${formatWhen(r.endedAt)} · ${if (r.manual) "manual" else "background"} · ${formatDuration(r.durationMs)}" +
-                if (r.files.isNotEmpty()) " · ${if (expanded) "hide" else "show"} files" else "",
-            style = MetaStyle,
-            color = c.dim,
-        )
+        Text(roundDetail(r), style = MaterialTheme.typography.bodyMedium, color = if (r.error != null) c.danger else c.text2)
+        Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
+            Text(
+                listOfNotNull(
+                    formatWhen(r.endedAt),
+                    r.route.ifEmpty { null },
+                    if (r.manual) "manual" else "background",
+                    formatDuration(r.durationMs),
+                ).joinToString(" · "),
+                style = Tm.text.numeric,
+                color = c.text2,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (r.files.isNotEmpty()) {
+                Text(if (expanded) "Hide files" else "Show files", style = MaterialTheme.typography.labelMedium, color = c.link)
+            }
+        }
         if (expanded) {
-            Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.padding(top = TmDimens.space1_5), verticalArrangement = Arrangement.spacedBy(TmDimens.space0_5)) {
                 r.files.asReversed().forEach {
-                    Text(it, style = MetaStyle, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                    Text(it, style = Tm.text.code, color = c.text, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                 }
                 if (r.uploaded > r.files.size) {
-                    Text("… and ${r.uploaded - r.files.size} more", style = MetaStyle, color = c.dim)
+                    Text("… and ${r.uploaded - r.files.size} more", style = Tm.text.code, color = c.text2)
                 }
             }
         }

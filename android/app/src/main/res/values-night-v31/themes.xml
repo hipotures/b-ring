@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Bring" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF26292C</item>
+        <item name="android:windowSplashScreenBackground">#26292C</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher</item>
+    </style>
+</resources>

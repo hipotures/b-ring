@@ -2,6 +2,7 @@ package io.github.hipotures.bring
 
 import android.content.Context
 import androidx.core.content.edit
+import io.github.hipotures.bring.ui.ThemeChoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,13 +11,18 @@ import kotlinx.coroutines.flow.asStateFlow
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
 
-    private val _dark = MutableStateFlow(sp.getBoolean(DARK, true))
-    /** Dark (high contrast) by default. */
-    val darkTheme: StateFlow<Boolean> = _dark.asStateFlow()
+    private val _theme = MutableStateFlow(
+        ThemeChoice.entries.firstOrNull { it.name == sp.getString(THEME, null) } ?: ThemeChoice.SYSTEM,
+    )
+    /** Follows the system (Light/Dark) by default. */
+    val theme: StateFlow<ThemeChoice> = _theme.asStateFlow()
 
-    fun setDarkTheme(dark: Boolean) {
-        sp.edit { putBoolean(DARK, dark) }
-        _dark.value = dark
+    fun setTheme(choice: ThemeChoice) {
+        sp.edit {
+            putString(THEME, choice.name)
+            remove(LEGACY_DARK)
+        }
+        _theme.value = choice
     }
 
     /** User-chosen offload threshold, or null for the engine default. */
@@ -25,7 +31,8 @@ class Prefs(context: Context) {
         set(v) = sp.edit { if (v == null) remove(OFFLOAD) else putLong(OFFLOAD, v.toLong()) }
 
     private companion object {
-        const val DARK = "dark_theme"
+        const val THEME = "theme"
+        const val LEGACY_DARK = "dark_theme" // before The Mechanics
         const val OFFLOAD = "offload_threshold"
     }
 }

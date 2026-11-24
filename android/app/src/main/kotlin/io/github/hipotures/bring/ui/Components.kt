@@ -1,50 +1,75 @@
 package io.github.hipotures.bring.ui
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.hipotures.bring.ffi.EntryState
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
+import themechanics.compose.tmHardShadow
+import themechanics.compose.tone
 
-/** A bordered, square section with an optional mono caption. */
+/** Controls and badges: 2 dp radius. Regions and panels are square. */
+val ControlShape = RoundedCornerShape(TmDimens.radiusControl)
+
+/** Level 3 separator: rows inside a list or panel. */
+@Composable
+fun RowDivider() = HorizontalDivider(thickness = TmDimens.bw3, color = Tm.colors.line3)
+
+/**
+ * Level 2 panel: 1 dp `line2` frame, `head2` header band with a 1 dp rule,
+ * `surface` body. [trailing] holds a small status plate or a quiet action.
+ */
 @Composable
 fun Panel(
     modifier: Modifier = Modifier,
@@ -52,38 +77,69 @@ fun Panel(
     trailing: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val c = Tm.colors
     Column(
         modifier
             .fillMaxWidth()
-            .border(Hairline, MaterialTheme.colorScheme.outline, Sharp)
-            .background(MaterialTheme.colorScheme.surfaceContainer, Sharp),
+            .border(TmDimens.bw2, c.line2, RectangleShape)
+            .background(c.surface),
     ) {
         if (title != null) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .heightIn(min = 44.dp)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .background(c.head2)
+                    .heightIn(min = TmDimens.toolbarH)
+                    .padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space1),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
             ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
+                Text(title, style = MaterialTheme.typography.titleMedium, color = c.text, modifier = Modifier.weight(1f))
                 trailing()
             }
-            HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
+            HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            content()
-        }
+        Column(
+            Modifier.padding(TmDimens.panelPad),
+            verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
+            content = content,
+        )
     }
 }
 
-/** Square-cornered button, 48dp tall; `primary` fills it, otherwise it is outlined. */
+/**
+ * Level 3 group nested in a panel: 1 dp `line3` frame and a `sunken` band
+ * with an eyebrow label, never stronger than the panel header above it.
+ */
+@Composable
+fun Group(
+    modifier: Modifier = Modifier,
+    title: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = Tm.colors
+    Column(modifier.fillMaxWidth().border(TmDimens.bw3, c.line3, RectangleShape)) {
+        if (title != null) {
+            Text(
+                title.uppercase(),
+                style = Tm.text.eyebrow,
+                color = c.text2,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.sunken)
+                    .padding(horizontal = TmDimens.cellPadX, vertical = TmDimens.space1_5),
+            )
+            HorizontalDivider(thickness = TmDimens.bw3, color = c.line3)
+        }
+        Column(content = content)
+    }
+}
+
+/**
+ * A control: 2 dp `ink` frame, 2 dp radius, `surface` fill; [primary] is
+ * filled with `accent`. Visually 40 dp tall, 48 dp touch target. Focus is
+ * the hard ink "lift", never a ring.
+ */
 @Composable
 fun SharpButton(
     text: String,
@@ -93,65 +149,101 @@ fun SharpButton(
     primary: Boolean = false,
     danger: Boolean = false,
 ) {
-    val padding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
-    val label: @Composable RowScope.() -> Unit = {
-        Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val c = Tm.colors
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val (fill, frame, fg) = when {
+        !enabled -> Triple(c.sunken, c.lineDisabled, c.textDisabled)
+        primary && danger -> Triple(c.danger, c.ink, c.textInverse)
+        primary -> Triple(if (pressed) c.accentPress else c.accent, c.ink, c.accentText)
+        else -> Triple(if (pressed) c.press else c.surface, c.ink, if (danger) c.danger else c.text)
     }
-    val accent = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    if (primary) {
-        Button(
-            onClick,
-            modifier.heightIn(min = 48.dp),
-            enabled = enabled,
-            shape = Sharp,
-            contentPadding = padding,
-            colors = ButtonDefaults.buttonColors(containerColor = accent),
-            content = label,
-        )
-    } else {
-        OutlinedButton(
-            onClick,
-            modifier.heightIn(min = 48.dp),
-            enabled = enabled,
-            shape = Sharp,
-            contentPadding = padding,
-            border = BorderStroke(
-                Hairline,
-                if (enabled) accent else MaterialTheme.colorScheme.outlineVariant,
-            ),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = accent),
-            content = label,
-        )
+    Box(
+        modifier
+            .minimumInteractiveComponentSize()
+            .then(if (focused && enabled) Modifier.tmHardShadow(c.focus, TmDimens.focusLift) else Modifier)
+            .border(TmDimens.bwControl, frame, ControlShape)
+            .background(fill, ControlShape)
+            .clickable(interaction, indication = null, enabled = enabled, onClick = onClick)
+            .heightIn(min = TmDimens.controlLg)
+            .padding(horizontal = TmDimens.controlPadXLg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** `key   value` row; [code] sets the value in monospace (hashes, URLs). */
+/**
+ * One-of-N choice: 2 dp ink frame, 1 dp ink dividers, the chosen cell in
+ * the selection fill. Weight never changes, so nothing shifts. [sub] adds a
+ * mono second line (counts).
+ */
 @Composable
-fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified, code: Boolean = false) {
+fun <T> Segmented(
+    options: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    label: (T) -> String,
+    modifier: Modifier = Modifier,
+    sub: ((T) -> String)? = null,
+) {
+    val c = Tm.colors
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .border(TmDimens.bwControl, c.ink, ControlShape)
+            .padding(TmDimens.bwControl),
+    ) {
+        options.forEachIndexed { i, o ->
+            if (i > 0) VerticalDivider(thickness = TmDimens.bw2, color = c.ink)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .background(if (o == selected) c.selectBg else c.surface)
+                    .clickable { onSelect(o) }
+                    .heightIn(min = TmDimens.controlLg)
+                    .padding(horizontal = TmDimens.space1, vertical = TmDimens.space1_5),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(label(o), style = MaterialTheme.typography.labelLarge, color = c.text, maxLines = 1)
+                if (sub != null) Text(sub(o), style = Tm.text.numeric, color = c.text2, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** `key   value`: the label in `labelMedium`, the value in mono. */
+@Composable
+fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified) {
     Row(Modifier.fillMaxWidth()) {
         Text(
             key,
-            style = MaterialTheme.typography.bodyMedium,
-            color = BringTheme.colors.dim,
-            modifier = Modifier.widthIn(min = 96.dp).padding(end = 12.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = Tm.colors.text2,
+            modifier = Modifier.widthIn(min = 104.dp).padding(end = TmDimens.space3, top = 1.dp),
         )
         Text(
             value,
-            style = if (code) CodeStyle else MaterialTheme.typography.bodyMedium,
-            color = valueColor,
+            style = Tm.text.code,
+            color = if (valueColor == Color.Unspecified) Tm.colors.text else valueColor,
             modifier = Modifier.weight(1f),
         )
     }
 }
 
+// ---------------------------------------------------------------- badges
+
 /** What a file row shows, in order; see [badgesFor]. */
-enum class Badge(val label: String) {
-    LOCAL("LOCAL"),
-    SYNCED("SYNCED"),
-    REMOTE("REMOTE"),
-    UPLOAD("QUEUED"),
-    ERROR("ERROR"),
-    HELD("HELD"),
+enum class Badge(val label: String, val tone: TmTone) {
+    LOCAL("Local", TmTone.Neutral),
+    SYNCED("Synced", TmTone.Success),
+    REMOTE("Remote", TmTone.Info),
+    UPLOAD("Queued", TmTone.Pending),
+    ERROR("Failed", TmTone.Danger),
+    HELD("Held", TmTone.Warning),
 }
 
 /**
@@ -172,20 +264,153 @@ fun badgesFor(state: EntryState, pending: Boolean, error: String?, suppressed: B
         if (suppressed) add(Badge.HELD)
     }
 
-/** A square "ring": the file lives on the Ring. */
-private val RingGlyph: ImageVector by lazy {
-    ImageVector.Builder("ring", 24.dp, 24.dp, 24f, 24f).apply {
-        path(stroke = SolidColor(Color.Black), strokeLineWidth = 3.5f, strokeLineJoin = StrokeJoin.Miter) {
-            moveTo(5f, 5f)
-            lineTo(19f, 5f)
-            lineTo(19f, 19f)
-            lineTo(5f, 19f)
-            close()
-        }
-    }.build()
+@Composable
+fun BadgeChip(badge: Badge) = Tag(badge.label, badge.tone)
+
+/**
+ * Inline status (rows, lines of text): tone `soft` fill, 1 dp tone `line`
+ * frame, tone `fg` mono uppercase text and a marker shape, so state is
+ * never shown by color alone.
+ */
+@Composable
+fun Tag(text: String, tone: TmTone) {
+    val t = Tm.colors.tone(tone)
+    Row(
+        Modifier
+            .border(TmDimens.bw2, t.line, ControlShape)
+            .background(t.soft, ControlShape)
+            .padding(horizontal = TmDimens.space1_5, vertical = TmDimens.space0_5),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ToneMark(tone, t.fg)
+        Spacer(Modifier.width(TmDimens.space1))
+        Text(text.uppercase(), style = Tm.text.badge, color = t.fg, maxLines = 1)
+    }
 }
 
-/** A square-cornered folder outline (icons-core has no folder icon). */
+/** Badge marker, about cap height: ■ neutral ✓ success ▲ warning ✕ danger ● info ○ pending ⬚ offline. */
+@Composable
+private fun ToneMark(tone: TmTone, color: Color, size: Dp = 9.dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val sw = w * 0.2f
+        when (tone) {
+            TmTone.Neutral, TmTone.Accent -> drawRect(color, Offset(w * 0.1f, w * 0.1f), Size(w * 0.8f, w * 0.8f))
+            TmTone.Success -> drawPath(
+                Path().apply { moveTo(w * 0.08f, w * 0.52f); lineTo(w * 0.38f, w * 0.82f); lineTo(w * 0.94f, w * 0.18f) },
+                color, style = Stroke(sw, cap = StrokeCap.Square, join = StrokeJoin.Miter),
+            )
+            TmTone.Warning -> drawPath(
+                Path().apply { moveTo(w / 2, 0f); lineTo(w, w); lineTo(0f, w); close() }, color,
+            )
+            TmTone.Danger -> {
+                drawLine(color, Offset(w * 0.12f, w * 0.12f), Offset(w * 0.88f, w * 0.88f), sw, StrokeCap.Square)
+                drawLine(color, Offset(w * 0.88f, w * 0.12f), Offset(w * 0.12f, w * 0.88f), sw, StrokeCap.Square)
+            }
+            TmTone.Info -> drawCircle(color, w / 2)
+            TmTone.Pending -> drawCircle(color, w / 2 - sw / 2, style = Stroke(sw))
+            TmTone.Offline -> drawRect(
+                color, Offset(sw / 2, sw / 2), Size(w - sw, w - sw),
+                style = Stroke(sw, pathEffect = PathEffect.dashPathEffect(floatArrayOf(sw * 1.5f, sw))),
+            )
+        }
+    }
+}
+
+// --------------------------------------------------------- status plates
+
+/** Marker of a status plate: ✓ complete, dot active, triangle warning, ! error, ring pending. */
+enum class PlateMark { COMPLETE, ACTIVE, WARNING, ERROR, PENDING }
+
+/**
+ * Standalone status (top bar, panel head): control height, `ink` frame,
+ * `surface` fill; the state is carried by the drawn [mark].
+ */
+@Composable
+fun StatusPlate(
+    text: String,
+    mark: PlateMark,
+    modifier: Modifier = Modifier,
+    small: Boolean = false,
+    onClick: (() -> Unit)? = null,
+) {
+    val c = Tm.colors
+    Row(
+        modifier
+            .then(if (onClick != null) Modifier.minimumInteractiveComponentSize() else Modifier)
+            .border(TmDimens.bwControl, c.ink, ControlShape)
+            .background(c.surface, ControlShape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .heightIn(min = if (small) TmDimens.controlSm else TmDimens.controlMd)
+            .padding(horizontal = if (small) TmDimens.controlPadXSm else TmDimens.controlPadXMd),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PlateMarkIcon(mark, if (small) 14.dp else TmDimens.iconMd)
+        Spacer(Modifier.width(TmDimens.space2))
+        Text(
+            text,
+            style = if (small) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+            color = c.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+fun PlateMarkIcon(mark: PlateMark, size: Dp) {
+    val c = Tm.colors
+    val ground = c.surface
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val r = w / 2
+        val sw = w * 0.12f
+        when (mark) {
+            PlateMark.COMPLETE -> {
+                drawCircle(c.success, r)
+                drawPath(
+                    Path().apply { moveTo(w * 0.27f, w * 0.52f); lineTo(w * 0.44f, w * 0.68f); lineTo(w * 0.74f, w * 0.34f) },
+                    ground, style = Stroke(w * 0.14f, cap = StrokeCap.Square, join = StrokeJoin.Miter),
+                )
+            }
+            PlateMark.ACTIVE -> {
+                drawCircle(c.info, r - sw / 2, style = Stroke(sw))
+                drawCircle(c.info, r * 0.45f)
+            }
+            PlateMark.WARNING -> {
+                drawCircle(c.warning, r - sw / 2, style = Stroke(sw))
+                drawPath(
+                    Path().apply { moveTo(r, w * 0.24f); lineTo(w * 0.76f, w * 0.7f); lineTo(w * 0.24f, w * 0.7f); close() },
+                    c.warning,
+                )
+            }
+            PlateMark.ERROR -> {
+                drawCircle(c.danger, r)
+                drawExclamation(ground, w)
+            }
+            PlateMark.PENDING -> drawCircle(c.text3, r - sw / 2, style = Stroke(sw))
+        }
+    }
+}
+
+/** "!" drawn as shapes, with a clear gap between stem and dot. */
+private fun DrawScope.drawExclamation(color: Color, w: Float) {
+    val sw = w * 0.15f
+    drawRoundRect(color, Offset(w / 2 - sw / 2, w * 0.2f), Size(sw, w * 0.36f), CornerRadius(sw / 4))
+    drawRect(color, Offset(w / 2 - sw / 2, w * 0.66f), Size(sw, sw))
+}
+
+/** An error message: danger text after a solid "!" mark. */
+@Composable
+fun ErrorLine(text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Box(Modifier.padding(top = 3.dp)) { PlateMarkIcon(PlateMark.ERROR, 14.dp) }
+        Spacer(Modifier.width(TmDimens.space2))
+        Text(text, color = Tm.colors.danger, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** A square-cornered folder outline in the Outlined icon style (icons-core has no folder). */
 val FolderGlyph: ImageVector by lazy {
     ImageVector.Builder("folder", 24.dp, 24.dp, 24f, 24f).apply {
         path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
@@ -200,60 +425,28 @@ val FolderGlyph: ImageVector by lazy {
     }.build()
 }
 
-/** A filled, square, high-contrast badge with an icon and a label. */
+/** Text fields: `inset` well, `lineInput` frame, `ink` when focused (no accent ring). */
 @Composable
-fun BadgeChip(badge: Badge) {
-    val c = BringTheme.colors
-    val (fill, icon) = when (badge) {
-        Badge.LOCAL -> c.local to Icons.Filled.Phone
-        Badge.SYNCED -> c.synced to Icons.Filled.Check
-        Badge.REMOTE -> c.remote to RingGlyph
-        Badge.UPLOAD -> MaterialTheme.colorScheme.primary to Icons.Filled.KeyboardArrowUp
-        Badge.ERROR -> c.warn to Icons.Filled.Warning
-        Badge.HELD -> c.dim to null
-    }
-    Row(
-        Modifier
-            .background(fill, Sharp)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) {
-            Icon(icon, null, Modifier.size(14.dp), tint = c.onBadge)
-            Spacer(Modifier.width(4.dp))
-        }
-        Text(
-            badge.label,
-            color = c.onBadge,
-            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
-            maxLines = 1,
-        )
-    }
+fun tmFieldColors() = Tm.colors.let { c ->
+    OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = c.inset,
+        unfocusedContainerColor = c.inset,
+        focusedBorderColor = c.ink,
+        unfocusedBorderColor = c.lineInput,
+        focusedLabelColor = c.text,
+        unfocusedLabelColor = c.text2,
+        cursorColor = c.text,
+    )
 }
 
-/** An outlined status tag, e.g. the route (LAN / WAN / OFFLINE). */
+/** Indeterminate progress: `accent` on a `line3` track, square ends, no gap. */
 @Composable
-fun Tag(text: String, color: Color) {
-    Box(
-        Modifier
-            .border(Hairline, color, Sharp)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
-        Text(
-            text,
-            color = color,
-            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
-        )
-    }
-}
-
-@Composable
-fun ErrorLine(text: String) {
-    Text(
-        text,
-        color = MaterialTheme.colorScheme.error,
-        style = MaterialTheme.typography.bodyMedium,
+fun BusyBar(modifier: Modifier = Modifier) {
+    LinearProgressIndicator(
+        modifier.fillMaxWidth().height(4.dp),
+        color = Tm.colors.accent,
+        trackColor = Tm.colors.line3,
+        strokeCap = StrokeCap.Butt,
+        gapSize = 0.dp,
     )
 }

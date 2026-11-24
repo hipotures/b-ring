@@ -1,0 +1,9 @@
+<resources>
+    <!-- The Mechanics, Dark theme (see values/colors.xml). -->
+    <color name="tm_scanner_frame">#FFA9AEA6</color>            <!-- line1 -->
+    <color name="zxing_viewfinder_laser">#FFAAC67B</color>      <!-- accent -->
+    <color name="zxing_possible_result_points">#C0AAC67B</color>
+    <color name="zxing_viewfinder_mask">#9926292C</color>       <!-- canvas, 60% -->
+    <color name="zxing_result_view">#B026292C</color>
+    <color name="zxing_status_text">#FFE9EBE6</color>           <!-- text -->
+</resources>

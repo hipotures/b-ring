@@ -21,12 +21,24 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.Icon
+import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.FolderGlyph
+import io.github.hipotures.bring.ui.Group
+import io.github.hipotures.bring.ui.PlateMark
+import io.github.hipotures.bring.ui.RoutePlate
+import io.github.hipotures.bring.ui.RowDivider
+import io.github.hipotures.bring.ui.Segmented
+import io.github.hipotures.bring.ui.StatusPlate
+import io.github.hipotures.bring.ui.ThemeChoice
+import themechanics.compose.Tm
+import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
+import themechanics.compose.tmHardShadow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +48,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -45,15 +60,11 @@ import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.storage.StorageAccess
 import io.github.hipotures.bring.versionLine
-import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.KeyValue
-import io.github.hipotures.bring.ui.MetaStyle
 import io.github.hipotures.bring.ui.Panel
-import io.github.hipotures.bring.ui.Sharp
 import io.github.hipotures.bring.ui.SharpButton
 import io.github.hipotures.bring.ui.Tag
-import io.github.hipotures.bring.ui.routeColor
 
 private val MIB: ULong = 1024UL * 1024UL
 
@@ -73,7 +84,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    val dark by context.bring.prefs.darkTheme.collectAsStateWithLifecycle()
+    val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
     var offload by remember { mutableStateOf(context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)) }
     var picking by rememberSaveable { mutableStateOf(false) }
     var confirmForget by remember { mutableStateOf(false) }
@@ -84,25 +95,25 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .imePadding()
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(TmDimens.panelPad),
+        verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
     ) {
         message?.let { ErrorLine(it) }
 
         Panel(title = "Ring") {
             KeyValue("Device", ring.deviceSlug)
-            KeyValue("Ring ID", ring.ringId.take(16), code = true)
-            KeyValue("LAN", ring.lanUrl, code = true)
-            KeyValue("WAN", ring.wanUrl ?: "— (LAN only)", code = ring.wanUrl != null)
-            KeyValue("TLS pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …", code = true)
+            KeyValue("Ring ID", ring.ringId.take(16))
+            KeyValue("LAN", ring.lanUrl)
+            KeyValue("WAN", ring.wanUrl ?: "— (LAN only)")
+            KeyValue("TLS pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …")
         }
 
-        Panel(title = "Connection", trailing = { Tag(route.label, routeColor(route)) }) {
+        Panel(title = "Connection", trailing = { RoutePlate(route) }) {
             Text(
                 "LAN when on unmetered Wi-Fi and the Ring answers within 1.5 s; " +
                     "otherwise WAN if configured. Background sync runs on LAN only.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BringTheme.colors.dim,
+                color = Tm.colors.text2,
             )
             SharpButton("Check again", onClick = vm::recheckRoute)
         }
@@ -110,9 +121,10 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
         Panel(
             title = "Storage access",
             trailing = {
-                Tag(
-                    if (storage) "GRANTED" else "REQUIRED",
-                    if (storage) BringTheme.colors.synced else BringTheme.colors.warn,
+                StatusPlate(
+                    if (storage) "Granted" else "Required",
+                    if (storage) PlateMark.COMPLETE else PlateMark.WARNING,
+                    small = true,
                 )
             },
         ) {
@@ -120,7 +132,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                 "All-files access lets the engine read watched folders by path and " +
                     "delete offloaded copies.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BringTheme.colors.dim,
+                color = Tm.colors.text2,
             )
             if (!storage) {
                 SharpButton("Grant all-files access", primary = true, onClick = {
@@ -136,20 +148,29 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
 
         Panel(title = "Watched folders") {
             if (folders.isEmpty()) {
-                Text("None yet.", style = MaterialTheme.typography.bodyMedium, color = BringTheme.colors.dim)
+                Text("None yet.", style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)
             }
-            folders.forEach { f ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(FolderGlyph, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(
-                            f.localDir.removePrefix(StorageAccess.root().path + "/"),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text("on the Ring: ${f.ringFolder}", style = MetaStyle, color = BringTheme.colors.dim)
-                    }
-                    IconButton(onClick = { vm.removeFolder(f.id) }) {
-                        Icon(Icons.Filled.Delete, "Stop watching", tint = MaterialTheme.colorScheme.error)
+            if (folders.isNotEmpty()) {
+                Group {
+                    folders.forEachIndexed { i, f ->
+                        if (i > 0) RowDivider()
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = TmDimens.cellPadX),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(FolderGlyph, null, Modifier.size(TmDimens.iconLg), tint = Tm.colors.text2)
+                            Column(
+                                Modifier.weight(1f).padding(start = TmDimens.space3, top = TmDimens.space2, bottom = TmDimens.space2),
+                            ) {
+                                Text(
+                                    f.localDir.removePrefix(StorageAccess.root().path + "/"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Tm.colors.text,
+                                )
+                                Text("→ Ring: ${f.ringFolder}", style = Tm.text.code, color = Tm.colors.text2)
+                            }
+                            ActionIcon(Icons.Outlined.Delete, "Stop watching", { vm.removeFolder(f.id) })
+                        }
                     }
                 }
             }
@@ -158,8 +179,8 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                 if (storage) StorageAccess.suggestions().map { it.path }.filter { it !in watched } else emptyList()
             }
             if (suggestions.isNotEmpty()) {
-                Text("Quick add", style = MaterialTheme.typography.bodyMedium, color = BringTheme.colors.dim)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("QUICK ADD", style = Tm.text.eyebrow, color = Tm.colors.text2)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
                     suggestions.forEach { path ->
                         SharpButton("+ ${path.substringAfterLast('/')}", onClick = { vm.addFolder(path) })
                     }
@@ -175,8 +196,8 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             if (!storage) {
                 Text(
                     "Grant all-files access above to pick folders.",
-                    style = MetaStyle,
-                    color = BringTheme.colors.dim,
+                    style = Tm.text.code,
+                    color = Tm.colors.text2,
                 )
             }
         }
@@ -185,35 +206,38 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             Text(
                 "After a verified upload, delete the local copy of files larger than:",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BringTheme.colors.dim,
+                color = Tm.colors.text2,
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OFFLOAD_CHOICES.forEach { (label, bytes) ->
-                    SharpButton(label, primary = offload == bytes, onClick = {
-                        offload = bytes
-                        vm.setOffloadThreshold(bytes)
-                    })
-                }
-            }
+            Segmented(
+                options = OFFLOAD_CHOICES,
+                selected = OFFLOAD_CHOICES.firstOrNull { it.second == offload } ?: OFFLOAD_CHOICES[1],
+                onSelect = { (_, bytes) ->
+                    offload = bytes
+                    vm.setOffloadThreshold(bytes)
+                },
+                label = { it.first },
+            )
         }
 
         Panel(title = "Appearance") {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SharpButton("Dark", primary = dark, onClick = { vm.setDarkTheme(true) })
-                SharpButton("Light", primary = !dark, onClick = { vm.setDarkTheme(false) })
-            }
+            Segmented(ThemeChoice.entries, theme, vm::setTheme, label = { it.label })
+            Text(
+                "System follows the phone's light or dark mode. Coffee is a warm dark theme.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Tm.colors.text2,
+            )
         }
 
         Panel(title = "Pairing") {
             Text(
                 "Forgetting the Ring drops its index on this device. Local files are not touched.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BringTheme.colors.dim,
+                color = Tm.colors.text2,
             )
             SharpButton("Forget Ring", danger = true, onClick = { confirmForget = true })
         }
 
-        Text(versionLine(context), style = MetaStyle, color = BringTheme.colors.dim)
+        Text(versionLine(context), style = Tm.text.code, color = Tm.colors.text2)
     }
 
     if (picking) {
@@ -230,9 +254,24 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     if (confirmForget) {
         AlertDialog(
             onDismissRequest = { confirmForget = false },
-            shape = Sharp,
+            // Overlay: 2 dp line1 frame and a hard offset shadow, no soft elevation.
+            // The padding keeps the offset shadow inside the dialog window.
+            modifier = Modifier
+                .padding(end = TmDimens.shadowOverlay, bottom = TmDimens.shadowOverlay)
+                .tmHardShadow(Tm.colors.shadowOverlay, TmDimens.shadowOverlay)
+                .border(TmDimens.bw1, Tm.colors.line1, MaterialTheme.shapes.extraLarge),
+            containerColor = Tm.colors.surface,
+            tonalElevation = 0.dp,
             title = { Text("Forget this Ring?") },
-            text = { Text("You will need `bring pair` to connect again.") },
+            text = {
+                Text(
+                    buildAnnotatedString {
+                        append("You will need ")
+                        withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("bring pair") }
+                        append(" to connect again.")
+                    },
+                )
+            },
             confirmButton = {
                 SharpButton("Forget", danger = true, primary = true, onClick = {
                     confirmForget = false
@@ -257,7 +296,7 @@ private fun NotificationRow() {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text("Notifications", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         if (ok) {
-            Tag("ON", BringTheme.colors.synced)
+            Tag("On", TmTone.Success)
         } else {
             SharpButton("Allow", onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) })
         }
