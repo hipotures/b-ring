@@ -6,6 +6,11 @@ plugins {
 // The Cargo workspace this Gradle project lives in.
 val repoRoot: File = rootDir.parentFile
 
+// ABIs to build and package. Devices are arm64-v8a; add x86_64 to run in the
+// emulator: ./gradlew -Pbring.abis=arm64-v8a,x86_64 assembleDebug
+val abis: List<String> = providers.gradleProperty("bring.abis")
+    .getOrElse("arm64-v8a").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
 // Version from git, same scheme as crates/bring-core/build.rs:
 // "<major>.<minor>.<commits>+<hash>". versionCode is the commit count, so
 // every commit installs as an upgrade.
@@ -42,7 +47,7 @@ android {
         versionName = "$baseVersion.$commitCount+$commitHash"
 
         // Target devices (phone, Meta Quest 3) are all arm64-v8a.
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += abis }
     }
 
     buildFeatures { compose = true }
@@ -61,10 +66,11 @@ android {
 // `libbring_uniffi.so` (arm64-v8a) and its Kotlin bindings, via cargo-ndk.
 val sdkPath: String = androidComponents.sdkComponents.sdkDirectory.get().asFile.path
 val cargoAndroid = tasks.register<Exec>("cargoAndroid") {
-    description = "Builds the Rust sync engine for arm64-v8a and generates Kotlin bindings."
+    description = "Builds the Rust sync engine for the selected ABIs and generates Kotlin bindings."
     workingDir = repoRoot
     commandLine(rootDir.resolve("build-rust.sh").path)
     environment("ANDROID_HOME", sdkPath)
+    environment("BRING_ABIS", abis.joinToString(" "))
 }
 
 // The same library for the host, so JVM unit tests call the real engine.

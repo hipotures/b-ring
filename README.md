@@ -69,6 +69,13 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+The APK is arm64-v8a only. To also run it in an x86_64 emulator (needs
+`rustup target add x86_64-linux-android`):
+
+```sh
+./gradlew -Pbring.abis=arm64-v8a,x86_64 assembleDebug
+```
+
 `android/build-rust.sh` can also be run on its own (`--debug` for an
 unoptimized build). Its outputs are generated and gitignored:
 `app/src/main/jniLibs/arm64-v8a/libbring_uniffi.so` and the Kotlin bindings
