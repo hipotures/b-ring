@@ -362,6 +362,7 @@ fn looks_thumbable_matches_images_and_videos_only() {
     assert!(looks_thumbable(Some("image/jpeg"), "a/b.jpg"));
     assert!(looks_thumbable(None, "a/BVR 2026-11-20.MP4"));
     assert!(!looks_thumbable(Some("image/svg+xml"), "a/icon.svg"));
+    assert!(!looks_thumbable(Some("video/vnd.dlna.mpeg-tts"), "a/prompts.ts"));
     assert!(!looks_thumbable(Some("application/pdf"), "a/doc.pdf"));
     assert!(!looks_thumbable(None, "a/notes.txt"));
 }

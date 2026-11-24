@@ -107,7 +107,7 @@ pub struct VerifyReport {
 
 pub(crate) fn looks_thumbable(mime: Option<&str>, ring_path: &str) -> bool {
     if let Some(m) = mime {
-        if m == "image/svg+xml" {
+        if m == "image/svg+xml" || m == "video/vnd.dlna.mpeg-tts" {
             return false;
         }
         if m.starts_with("image/") || m.starts_with("video/") {

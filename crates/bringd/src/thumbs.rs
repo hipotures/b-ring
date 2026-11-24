@@ -43,7 +43,8 @@ fn source_for(mime: &str) -> Option<Source> {
             Some(Source::Image)
         }
         m if m.starts_with("image/") && m != "image/svg+xml" => Some(Source::FfmpegImage),
-        m if m.starts_with("video/") => Some(Source::Video),
+        // `.ts` is overwhelmingly TypeScript in dev folders; mime_guess tags it as MPEG-TTS.
+        m if m.starts_with("video/") && m != "video/vnd.dlna.mpeg-tts" => Some(Source::Video),
         _ => None,
     }
 }
