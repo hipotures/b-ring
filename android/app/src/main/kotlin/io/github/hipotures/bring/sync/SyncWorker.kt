@@ -1,10 +1,12 @@
 package io.github.hipotures.bring.sync
 
+import android.app.NotificationManager
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.Data
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import io.github.hipotures.bring.bring
@@ -15,17 +17,24 @@ import io.github.hipotures.bring.ffi.TransferListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
  * One sync round: route selection (§4), then `run_sync` (index → scan →
- * outbox → index). No notifications: the app's top bar shows an upload in
- * progress, the history lists finished rounds. Without a foreground service
- * a background round may be stopped after about 10 minutes; uploads resume
- * chunk by chunk in the next round.
+ * outbox → index) as a foreground `dataSync` job, so switching apps or
+ * taking a screenshot does not stop an upload. Its notification is the
+ * blinking upload mark in the status bar (see [Notifications]); the history
+ * lists finished rounds.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+
+    override suspend fun getForegroundInfo(): ForegroundInfo = Notifications.foreground(applicationContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val bring = applicationContext.bring
@@ -34,6 +43,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         // Keep watching for new files: re-arm the media trigger.
         SyncScheduler.watchMedia(applicationContext, rearm = inputData.getBoolean(KEY_MEDIA, false))
         val moon = bring.moon
+        try {
+            setForeground(getForegroundInfo())
+        } catch (e: Exception) {
+            // Android 12+ may refuse a foreground start from the background;
+            // the round still runs, as an ordinary (stoppable) job.
+            Log.w(TAG, "running without a foreground service: $e")
+        }
 
         val route = try {
             moon.selectRoute(applicationContext.onUnmeteredWifi())
@@ -71,12 +87,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         try {
             val report = coroutineScope {
                 val run = async { moon.runSync(progress) }
+                val blink = launch { blink(progress) }
                 try {
                     run.await()
                 } catch (e: CancellationException) {
                     // The blocking call ends at the next file or chunk boundary.
                     moon.cancel()
                     throw e
+                } finally {
+                    blink.cancelAndJoin()
                 }
             }
             record(round(report, null))
@@ -89,6 +108,22 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         } catch (e: MoonException) {
             record(round(null, e.describe()))
             failure(e.describe())
+        }
+    }
+
+    /**
+     * Blink the status-bar mark while a file uploads: re-post the service's
+     * notification with the other icon frame (well under Android's limit of
+     * a few updates a second).
+     */
+    private suspend fun blink(progress: Progress) {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java) ?: return
+        var lit = false
+        while (currentCoroutineContext().isActive) {
+            delay(BLINK_MS)
+            val upload = progress.snapshot() ?: continue
+            lit = !lit
+            runCatching { nm.notify(Notifications.ID, Notifications.build(applicationContext, upload, lit)) }
         }
     }
 
@@ -108,7 +143,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     )
 
     /**
-     * Upload progress → WorkManager progress (the app's top bar), at most
+     * Upload progress → WorkManager progress (the app's file tags), at most
      * once a second: with many small files the engine reports
      * hundreds of files per second, far too fast to read.
      */
@@ -118,6 +153,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private var currentSent = 0L
         private var doneBytes = 0L
         private var files = 0
+
+        @Volatile private var last: Notifications.Upload? = null
+
+        /** The file being sent and the round's totals; null before the first one or once it is done. */
+        fun snapshot(): Notifications.Upload? = last?.takeIf { it.sent < it.total }
 
         /** Ring paths fully sent in this round (the last [SyncRound.MAX_FILES]). */
         val completed = ArrayDeque<String>()
@@ -134,6 +174,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 files++
             }
             currentSent = sent
+            last = Notifications.Upload(ringPath, sent, total, files, doneBytes + sent)
             if (sent >= total && completed.lastOrNull() != ringPath) {
                 completed.addLast(ringPath)
                 completedBytes += total
@@ -156,6 +197,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     companion object {
         private const val TAG = "SyncWorker"
+        private const val BLINK_MS = 600L
         const val KEY_MANUAL = "manual"
         const val KEY_MEDIA = "media"
         const val KEY_PATH = "path"

@@ -1,19 +1,6 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.graphics.vector.path
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.Color
-import androidx.compose.runtime.getValue
-import androidx.compose.foundation.layout.Box
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.animateColor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,7 +29,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.SyncUi
-import io.github.hipotures.bring.formatBytes
 import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncRound
@@ -62,11 +48,10 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title, a
- * blinking upload mark while a file is on its way to the Ring, route plate
- * and 48 dp icon actions. On the home screen a second line holds the last
- * round's result. Sync never changes the strip's height, so nothing below
- * it jumps.
+ * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title,
+ * route plate and 48 dp icon actions. On the home screen a second line holds
+ * the last round's result. Uploads show in the system status bar, so the
+ * strip never changes height and nothing below it jumps.
  */
 @Composable
 fun TopStrip(
@@ -95,7 +80,6 @@ fun TopStrip(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = if (onBack == null) TmDimens.space3 else TmDimens.space1),
             )
-            if (sync.running && sync.path != null) UploadMark(sync, onActivity)
             RoutePlate(route)
             if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
             if (onActivity != null) ActionIcon(Icons.AutoMirrored.Outlined.List, "Sync activity", onActivity)
@@ -148,42 +132,4 @@ private fun ResultRow(text: String, mark: PlateMark, at: Long, onClick: (() -> U
         StatusPlate(text, mark, modifier = Modifier.weight(1f, fill = false))
         Text(formatWhen(at), style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
     }
-}
-
-/**
- * Square with an up arrow (the shape of Android's upload icon), pulsing
- * between `text` and `info` while a file uploads. Tapping it opens the
- * history where the strip has a history action.
- */
-@Composable
-private fun UploadMark(sync: SyncUi, onClick: (() -> Unit)?) {
-    val c = Tm.colors
-    val tint by rememberInfiniteTransition(label = "upload").animateColor(
-        initialValue = c.text,
-        targetValue = c.info,
-        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
-        label = "tint",
-    )
-    val what = "Uploading ${sync.files} ${if (sync.files == 1) "file" else "files"}, ${formatBytes(sync.bytes)}"
-    Box(
-        Modifier
-            .size(48.dp)
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .semantics { contentDescription = what },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(UploadGlyph, null, Modifier.size(TmDimens.iconLg), tint = tint)
-    }
-}
-
-private val UploadGlyph: ImageVector by lazy {
-    ImageVector.Builder("upload", 24.dp, 24.dp, 24f, 24f).apply {
-        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
-            moveTo(4f, 4f); lineTo(20f, 4f); lineTo(20f, 20f); lineTo(4f, 20f); close()
-        }
-        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
-            moveTo(12f, 17f); lineTo(12f, 8f)
-            moveTo(8f, 12f); lineTo(12f, 8f); lineTo(16f, 12f)
-        }
-    }.build()
 }

@@ -439,14 +439,15 @@ connection cancels the session.
      returns the expected `ring_id`.
 
   Otherwise traffic goes to `wan_url`.
-- **Background sync** (WorkManager constraint `UNMETERED`, no foreground
-  service and no notifications) runs only when the LAN check passes. While a
-  file uploads, a blinking upload mark in the app's top bar says so; finished
-  rounds are listed in the in-app history. A background round may be stopped
-  after about 10 minutes; uploads resume chunk by chunk in the next round. A new file starts a round
-  within seconds (MediaStore content trigger); a 15-minute periodic round and
-  opening the app catch everything else. Over cellular, sync runs
-  only when the user starts it manually.
+- **Background sync** (WorkManager constraint `UNMETERED` + Foreground Service
+  `dataSync`, so Samsung's job throttling on app switches and screenshots
+  cannot stop an upload) runs only when the LAN check passes. The service's
+  notification is the only sync notification: its status-bar icon blinks
+  while a file uploads and disappears when the round ends. Finished rounds
+  are listed in the in-app history only. A new file starts a round within
+  seconds (MediaStore content trigger); a 15-minute periodic round and
+  opening the app catch everything else. Over cellular, sync runs only when
+  the user starts it manually.
 - **QR scanning** uses plain **ZXing** (`zxing-android-embedded`), with no
   Google Play Services dependency. The pairing screen also has a text field for
   typing or pasting the same base32 payload, as a fallback for devices without a
