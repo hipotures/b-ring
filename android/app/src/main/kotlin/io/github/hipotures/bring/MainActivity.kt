@@ -151,7 +151,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
             }
             Screen.ACTIVITY -> {
                 TopStrip("Sync activity", route, sync, onBack = { screen = Screen.HOME })
-                ActivityScreen(rounds, lastChecked)
+                ActivityScreen(rounds, lastChecked, entries)
             }
             Screen.SETTINGS -> {
                 TopStrip("Settings", route, sync, onBack = { screen = Screen.HOME })
