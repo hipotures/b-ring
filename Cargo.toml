@@ -32,6 +32,7 @@ axum-server = { version = "0.9.2", features = ["tls-rustls-ring"] }
 base64 = "0.22.1"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 mime_guess = "2.0.5"
+notify-rust = "4.19.0"
 qrcode = { version = "0.15.0", default-features = false, features = ["std"] }
 notify-debouncer-full = { version = "0.8.0", features = ["tokio"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "net", "signal", "time"] }
@@ -55,3 +56,10 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Keep debug builds small: full debuginfo made every test binary ~200 MB.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
