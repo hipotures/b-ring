@@ -8,7 +8,12 @@
 //!   the target exists, so an existing Ring file is never overwritten, even if
 //!   the desktop creates one concurrently — and the directory is `fsync`ed;
 //! - the index row and the upload state commit in one transaction, and only
-//!   then is the ACK returned.
+//!   then is the ACK returned; afterwards the staging name is unlinked, so the
+//!   committed file has exactly one link (orphans are swept by `cleanup`).
+//!
+//! The Ring therefore needs a filesystem with hard links (`check_hard_links`
+//! verifies that at startup), and every Ring folder must be on the same
+//! filesystem as `.bring/staging`.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -57,6 +62,23 @@ impl Uploads {
             db,
             locks: Arc::default(),
         }
+    }
+
+    /// Fails unless the staging directory's filesystem supports hard links
+    /// into the Ring (FAT/exFAT and some network filesystems do not).
+    pub fn check_hard_links(&self) -> io::Result<()> {
+        let probe = self.staging.join("link-probe.bring.tmp");
+        let target = self
+            .staging
+            .parent()
+            .unwrap_or(&self.root)
+            .join("link-probe");
+        let _ = std::fs::remove_file(&target);
+        File::create(&probe)?;
+        let linked = std::fs::hard_link(&probe, &target);
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&probe);
+        linked
     }
 
     fn staging_path(&self, id: &str) -> PathBuf {
@@ -469,6 +491,13 @@ fn place(
                 return Ok(Placed::Linked(cand));
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
+                return Err(ApiError::internal(format!(
+                    "{} is on a different filesystem than .bring/staging; \
+                     the Ring must live on one filesystem",
+                    cand.folder()
+                )));
+            }
             Err(e) => return Err(io_err(e)),
         }
     }

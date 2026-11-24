@@ -141,6 +141,7 @@ async fn full_cycle_with_retries_double_commit_and_dedupe() {
     assert_eq!(fs::read(&on_disk).unwrap(), content);
     let meta = fs::metadata(&on_disk).unwrap();
     assert_eq!(meta.mtime() * 1_000_000_000 + meta.mtime_nsec(), MTIME_NS);
+    assert_eq!(meta.nlink(), 1, "staging link removed after commit");
     assert_eq!(
         fs::read_dir(t.root.join(".bring/staging")).unwrap().count(),
         0

@@ -31,6 +31,14 @@ pub enum StartError {
     Db(#[from] bring_core::db::DbError),
     #[error(transparent)]
     Tls(#[from] TlsError),
+    #[error(
+        "the Ring filesystem at {path} does not support hard links ({source}); \
+         uploads need a POSIX filesystem such as ext4, btrfs or xfs"
+    )]
+    NoHardLinks {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("cannot watch the Ring directory: {0}")]
     Watch(#[from] notify_debouncer_full::notify::Error),
 }
@@ -87,6 +95,12 @@ impl Ring {
             std::time::Duration::from_secs(config.pairing_ttl_secs),
         );
         let uploads = Uploads::new(root.clone(), staging, db.clone());
+        uploads
+            .check_hard_links()
+            .map_err(|source| StartError::NoHardLinks {
+                path: root.clone(),
+                source,
+            })?;
         let recovered = uploads::recover(&uploads)?;
         if recovered > 0 {
             info!(recovered, "reopened uploads interrupted during commit");

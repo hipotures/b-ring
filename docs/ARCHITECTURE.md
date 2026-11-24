@@ -10,8 +10,12 @@ Ground rules that shape everything below:
   compile cleanly for Android through UniFFI.
 - **One API contract.** All HTTP DTOs live in `bring-core::api` and are used by
   both the server (`bringd`) and the client (`bring-uniffi`).
-- **Staging lives inside the Ring** (`<ring>/.bring/staging/`). `rename(2)` is
-  only atomic within one filesystem; the watcher ignores `.bring/`.
+- **Staging lives inside the Ring** (`<ring>/.bring/staging/`). Committed
+  uploads are *hard-linked* into place, which only works within one filesystem;
+  the watcher ignores `.bring/`. **Requirement:** the whole Ring (root, every
+  folder and `.bring/`) must be on a single filesystem that supports hard links
+  (ext4, btrfs, xfs, …; not FAT/exFAT). `bringd` checks this at startup and
+  refuses to start otherwise.
 - **Zero data loss.** A Moon deletes a local file only after a matching,
   verified `ACK`. Nothing on the Ring is ever overwritten by a sync.
 
@@ -37,10 +41,9 @@ b-ring/
 │   │   │   ├── ring/0001_init.sql
 │   │   │   └── moon/0001_init.sql
 │   │   └── pairing/
-│   │       ├── payload.rs        # compact binary bootstrap payload + Crockford base32
-│   │       ├── handshake.rs      # SPAKE2 + key confirmation, session states
-│   │       ├── sas.rs            # HKDF -> 6 digits
-│   │       └── seal.rs           # ChaCha20-Poly1305 for the pairing result
+│   │       ├── base32.rs         # Crockford base32 with check symbol
+│   │       ├── payload.rs        # compact binary bootstrap payload
+│   │       └── handshake.rs      # SPAKE2, key confirmation, SAS, sealed result
 │   ├── bringd/src/
 │   │   ├── main.rs, config.rs    # ~/.config/bring/bringd.toml
 │   │   ├── server/{mod,auth,health,index,thumbs,files,uploads,pair}.rs
@@ -65,7 +68,7 @@ b-ring/
 ```
                     bring-core
    (rusqlite[bundled], blake3, serde, spake2, hkdf, sha2,
-    chacha20poly1305, rand, thiserror; NO tokio)
+    chacha20poly1305, hmac, getrandom, thiserror; NO tokio)
         ▲                ▲                  ▲
         │                │                  │
      bringd          bring-cli         bring-uniffi
@@ -90,7 +93,9 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
--- ring_id (16 B), schema_version, next_seq
+-- ring_id (16 B), stream_key (32 B), next_seq
+-- The schema version lives in `PRAGMA user_version` (both databases), so
+-- migrations need no table to exist first.
 
 CREATE TABLE devices (
   id           INTEGER PRIMARY KEY,
@@ -150,7 +155,8 @@ CREATE TABLE upload_chunks (
 
 Every change to `files` (insert, update, tombstone) takes a fresh `seq` from
 `meta.next_seq` inside the same transaction, so delta sync is just
-`WHERE seq > ?`.
+`WHERE seq > ?`. `bringd` uses one serialized SQLite connection, so `seq` order
+equals commit order and a client never skips a change.
 
 ### 2.2 Moon (Android, same `bring-core::db` module)
 
@@ -243,6 +249,11 @@ CREATE TABLE outbox (
 
 - `Authorization: Bearer <device_token>`. The token is 32 random bytes,
   base64url-encoded. Unknown or revoked tokens get `401`.
+- Lookup is by an indexed `blake3(token)` (`devices.token_hash UNIQUE`) rather
+  than a constant-time comparison over all rows. A timing side channel could
+  reveal at most something about the hash, never the token, and the hash is a
+  one-way function of 256 random bits. `last_seen_at` is updated at most once a
+  minute.
 - Error body: `{"error": "<code>", "message": "..."}`. Codes: `unauthorized`,
   `not_found`, `hash_mismatch`, `missing_chunks`, `bad_chunk_length`,
   `conflict`, `expired`, `rejected`, `too_many_attempts`.
@@ -253,7 +264,7 @@ Public (no token):
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET  | `/health` | `{ring_id, version}`. LAN probe; `ring_id` proves this is *our* Ring |
+| GET  | `/health` | `{ring_id, version, protocol}`. LAN probe; `ring_id` proves this is *our* Ring |
 | POST | `/pair/{pairing_id}/exchange` | `{device_uuid, device_name, spake_msg}` → `{spake_msg, ring_confirm}` |
 | POST | `/pair/{pairing_id}/confirm`  | `{moon_confirm}` → `202 {status:"awaiting_user"}` |
 | GET  | `/pair/{pairing_id}/result`   | `202` pending · `200 {sealed}` · `403 rejected` · `410 expired` |
@@ -266,13 +277,21 @@ Authenticated:
 |---|---|---|
 | GET    | `/index?since={seq}&limit={n≤1000}` | delta sync |
 | GET    | `/thumbs/{thumb_blake3}` | `image/jpeg`, `Cache-Control: immutable` |
-| GET    | `/files/{id}/content` | Range / `206`, `ETag: "<blake3>"`, `Accept-Ranges: bytes` |
-| POST   | `/files/{id}/stream-url` | `{url, expires_at}`: short-lived HMAC-signed URL (`?st=`) for players that cannot send headers |
+| GET, HEAD | `/files/{id}/content` | Range / `206`, `ETag: "<blake3>"`, `Accept-Ranges: bytes`, `If-Range`, `If-None-Match` → `304`; `409` if the file changed since it was indexed |
+| POST   | `/files/{id}/stream-url` | `{url, expires_at}`: signed URL (`?st=`) for players that cannot send headers |
 | POST   | `/uploads` | create or resume an upload |
 | GET    | `/uploads/{id}` | `{state, chunk_size, chunk_count, received:[idx…]}` |
 | POST   | `/uploads/{id}/chunks/{index}` | raw body + `X-Bring-Chunk-Blake3` header |
 | POST   | `/uploads/{id}/commit` | verify the file and return the ACK |
 | DELETE | `/uploads/{id}` | abort; removes the staging file |
+
+**Stream URLs.** `url` is *relative* (`/api/v1/files/{id}/content?st=…`); the
+client prefixes the base URL it is using (LAN or WAN). The token is
+`base64url(file_id ‖ device_id ‖ expires_at ‖ MAC)` with
+`MAC = BLAKE3-keyed(meta.stream_key, …)` — a keyed BLAKE3 MAC instead of HMAC,
+same guarantees, one hash function fewer. Lifetime is 6 hours (a long movie
+must not expire mid-playback); revoking the device invalidates its URLs
+immediately.
 
 ### 3.4 Delta sync
 
@@ -282,12 +301,15 @@ GET /api/v1/index?since=1520&limit=1000
   "entries": [
     {"id": 88, "path": "DCIM/pixel-8/Camera/IMG_0042.jpg", "folder": "DCIM",
      "size": 3481221, "mtime_ns": 1764000000000000000, "mime": "image/jpeg",
-     "blake3": "af13…", "origin": "dev:3", "thumb": "9c0e…", "deleted": false, "seq": 1521}
+     "blake3": "af13…", "origin": "pixel-8", "thumb": "9c0e…", "deleted": false, "seq": 1521}
   ],
   "next_since": 1521,
   "has_more": false
 }
 ```
+
+`origin` is the uploading device's `slug`, or `null` for files that appeared on
+the desktop. A Moon knows its own slug (from pairing), not its numeric id.
 
 ### 3.5 Upload lifecycle
 
@@ -296,12 +318,18 @@ GET /api/v1/index?since=1520&limit=1000
    makes `client_key` deterministic and lets an existing file dedupe
    immediately. BLAKE3 on ARM64 runs at about 1 GB/s.
 1. **Create:** `POST /uploads {path, size, mtime_ns, blake3, chunk_size?}`.
-   The default chunk size is 8 MiB.
-   - `201 {upload_id, chunk_size, chunk_count, received: []}` for a new upload.
-   - An *active* upload with the same `(device, client_key)` is returned as-is,
-     with its `received` list, so resuming is idempotent.
+   The default chunk size is 8 MiB (allowed 64 KiB – 64 MiB). The response is
+   tagged by `status`:
+   - `201 {status:"open", upload_id, chunk_size, chunk_count, received: []}`
+     for a new upload.
+   - An *active* upload with the same `(device, client_key)` is returned as-is
+     (`200 {status:"open", …, received:[idx…]}`), so resuming is idempotent.
    - `200 {status:"exists", ack:{…}}` when the path already holds a file with
-     that hash.
+     that hash, **or** when this device already committed the same
+     `client_key` and the result is still on the Ring unchanged (its conflict
+     name, if any). That covers a Moon that lost the commit response: it gets
+     the original ACK instead of a duplicate file. `ack.upload_id` is `null`
+     when the ACK did not come from a commit of this device.
    - Earlier `failed` uploads do not block a new one (partial unique index).
 2. **Chunks:** `POST /uploads/{id}/chunks/{i}` → `204`.
    - The server writes each chunk with `pwrite` at offset `i * chunk_size` into
@@ -312,14 +340,27 @@ GET /api/v1/index?since=1520&limit=1000
    1. check that every chunk is present (otherwise `409 missing_chunks`);
    2. compute the full BLAKE3 of the staging file (mismatch → `409
       hash_mismatch`, state `failed`, staging file removed);
-   3. `fsync(file)` → `rename` to the target → `fsync(dir)`;
-   4. update `files` and take a new `seq` in one SQLite transaction;
-   5. send a desktop notification.
+   3. set `mtime`, `fsync(file)` → `link(staging, target)` → `fsync(dir)`.
+      `link(2)` fails with `EEXIST` instead of replacing, so even a file the
+      desktop creates at that instant is never overwritten (`rename(2)` would
+      silently replace it);
+   4. update `files` and take a new `seq` in one SQLite transaction (held
+      across the link, so the watcher cannot index a half-placed file);
+   5. **unlink the staging name**, leaving the Ring file with exactly one link.
+      If that unlink fails (crash, I/O error), the hourly cleanup removes every
+      staging file that does not belong to an `open`/`committing` upload;
+   6. queue a desktop notification. Uploads within 3 s are coalesced into one
+      notification ("12 files (48 MiB) received from pixel-8").
    - If the target path already holds *different* content, the existing file is
      never overwritten. The new file gets a conflict name such as
-     `IMG_0042 (pixel-8).jpg`.
+     `IMG_0042 (pixel-8).jpg`, then `IMG_0042 (pixel-8 2).jpg`, ….
+   - A Ring folder on another filesystem than `.bring/staging` makes the link
+     fail with `EXDEV`; the commit then fails with a message saying so.
 4. **ACK:** `{upload_id, file_id, path, size, blake3, seq}`. Committing an
-   already-committed upload returns the same ACK.
+   already-committed upload returns the same ACK — but only while the file is
+   still on the Ring with the acknowledged size, mtime and hash. Otherwise the
+   server answers `409 conflict` and the Moon must upload again: a repeated ACK
+   must never let a Moon delete its only remaining copy.
 5. **Retention on the Moon** (`bring-core::offload`, a pure function). The local
    file may be deleted only when *all* of these hold:
    - `ack.blake3 == local_hash`,
@@ -342,12 +383,22 @@ GET /api/v1/index?since=1520&limit=1000
     caught locally by the checksum, so it does not burn one of the 3 attempts.
   - `wan_url` and the certificate pin arrive later, inside `sealed`.
   - The same payload format will be reused for ggwave and BLE in Phase 2.
+- **Ring identity:** the payload does not carry `ring_id`. The Moon first calls
+  `GET /health` and uses the `ring_id` it reports. A wrong `ring_id` (wrong host
+  or an attacker) only makes key confirmation fail; it cannot produce a session.
 - **Handshake:** SPAKE2 (crate `spake2`, Ed25519 group).
-  - The password is the `one_time_token`; the identities are `ring_id` and
-    `device_uuid`.
-  - Both sides then exchange HMAC key-confirmation messages.
-- **SAS:** `HKDF-SHA256(K, info = "bring/sas/v1" || transcript)` → first 4
-  bytes, big-endian, `mod 1_000_000`, zero-padded to 6 digits.
+  - The password is `pairing_id ‖ one_time_token`; the identities are
+    `"bring-ring:" ‖ ring_id` and `"bring-moon:" ‖ device_uuid`.
+  - `transcript = SHA-256` over the length-prefixed identities, device name and
+    both SPAKE2 messages.
+  - Keys: `HKDF-SHA256(ikm = K, salt = transcript, info = label)` with labels
+    `bring/sas/v1`, `bring/confirm/ring/v1`, `bring/confirm/moon/v1`,
+    `bring/seal/v1` (binding the transcript through the salt rather than the
+    info string is equivalent).
+  - Both sides then exchange HMAC-SHA256 key-confirmation tags over the
+    transcript; `sealed` uses ChaCha20-Poly1305 with the transcript as AAD.
+- **SAS:** first 4 bytes of the `bring/sas/v1` key, big-endian,
+  `mod 1_000_000`, zero-padded to 6 digits.
 - **Session:** TTL 5 minutes, single use, at most 3 `exchange` attempts, kept
   in `bringd` memory only.
 - **Approval order:** `bring pair` waits for `y/N` on Linux. Only then does
@@ -357,9 +408,22 @@ GET /api/v1/index?since=1520&limit=1000
 ### 3.7 CLI ↔ bringd control protocol
 
 The CLI talks to `bringd` over a Unix socket at
-`$XDG_RUNTIME_DIR/bring/bringd.sock` (mode `0600`) using JSON lines. `pair`
-streams events: `Payload{qr, text}` → `Sas{code}` → (prompt) →
-`Confirm{bool}` → `Done{device}`.
+`$XDG_RUNTIME_DIR/bring/bringd.sock` (directory `0700`, socket `0600`) using
+JSON lines (`bring-core::ctl`). Requests: `status`, `devices`,
+`revoke{device}`, `pair`. `pair` is a conversation:
+`pair_payload{text, lan_url, expires_in_secs}` → `pair_sas{sas, device_name}` →
+the CLI sends `pair_decision{approve}` → `pair_done{device}` |
+`pair_rejected` | `pair_expired` | `pair_failed{message}`. Closing the
+connection cancels the session.
+
+### 3.8 `bringd` configuration
+
+`~/.config/bring/bringd.toml` (optional; unknown keys are an error):
+`ring_root`, `data_dir`, `lan_listen`, `proxy_listen`, `wan_url`,
+`advertise_ip` (LAN IP put into pairing payloads; auto-detected otherwise),
+`ctl_socket`, `pairing_ttl_secs` (300), `notifications` (true), `folders`
+(`DCIM`, `Download`, `Inbox`, created at startup), `debounce_ms` (2000),
+`ffmpeg` (path of the binary).
 
 ---
 
@@ -396,8 +460,9 @@ streams events: `Payload{qr, text}` → `Sas{code}` → (prompt) →
    under a conflict name and never overwrites the Ring copy.
 4. **LAN TLS:** a self-signed certificate plus a fingerprint pin (§3.1).
 5. **Thumbnails:** JPEG, max 320 px, from the `image` crate. Video frames and
-   formats `image` cannot decode (such as HEIC) go through `ffmpeg`. If
-   `ffmpeg` is missing, the file gets no thumbnail and no error.
+   files `image` fails to decode go through `ffmpeg` — decided by the decode
+   result, not the extension, so a HEIC saved as `.jpg` still gets a thumbnail.
+   If `ffmpeg` is missing, the file gets no thumbnail and no error.
 6. **Folder layout with several Moons.** Automatically watched folders map to a
    per-device subfolder by default (`DCIM/<device_slug>`,
    `Download/<device_slug>`) through `watched_folders.ring_folder`. Only `Inbox/`
@@ -435,7 +500,9 @@ Each step has a gate: its tests must pass before the next step starts.
    error.
 5. **Uploads.**
    - Create / resume / chunk / commit / abort.
-   - Staging file, atomic rename, conflict naming.
+   - Staging file, atomic no-overwrite `link` + staging unlink, conflict naming.
+   - Bearer auth (moved here from step 7: uploads must be attributed to a
+     device).
    - Partial unique index, cleanup of abandoned uploads after 7 days.
 
    *Gate:* integration tests for:
@@ -444,12 +511,12 @@ Each step has a gate: its tests must pass before the next step starts.
      retry after `failed`;
    - a double commit and `exists` dedupe.
 6. **Streaming.** `/files/{id}/content` with Range support, plus `stream-url`
-   with HMAC.
+   with a keyed-BLAKE3 MAC.
    *Gate:* tests for `bytes=0-`, `bytes=-500`, out-of-range requests (`416`) and
    `If-Range` / `ETag`.
 7. **Auth & TLS.**
-   - Bearer middleware (constant-time match on `blake3(token)`, updates
-     `last_seen_at`).
+   - Bearer middleware gate (lookup by indexed `blake3(token)`, §3.2; updates
+     `last_seen_at`). The middleware itself landed in step 5.
    - rcgen certificate; LAN (HTTPS) and optional proxy listeners.
 
    *Gate:* `401` for a missing token and for a revoked token.
@@ -467,15 +534,18 @@ Each step has a gate: its tests must pass before the next step starts.
 9. **OS integration.** `notify-rust` on upload commit and
    `dist/systemd/bringd.service`.
    *Gate:* manual smoke test.
-10. **bring-uniffi.**
-    - Pinning verifier and pairing client (§3.1).
-    - Delta sync; hash-then-upload (§3.5, step 0); outbox with backoff;
-      offload.
-    - Proc-macro exports; `cargo-ndk` build for arm64-v8a and x86_64.
+10. **bring-uniffi.** Target devices (phone, Meta Quest 3) are all
+    `arm64-v8a`; there is no `x86_64` build and no emulator.
+    - **10a — library.** Pinning verifier and pairing client (§3.1); delta
+      sync; hash-then-upload (§3.5, step 0); outbox with backoff; offload;
+      proc-macro exports.
 
-    *Gate:* a "fake Moon" in Rust (the same code Android runs) completes the full
-    cycle against a real `bringd`: pair → upload 150 MiB → ACK → `remote-only` →
-    stream.
+      *Gate:* a "fake Moon" in Rust (the same code Android runs) completes the
+      full cycle against a real `bringd`: pair → upload 150 MiB → ACK →
+      `remote-only` → stream.
+    - **10b — Android build.** Minimal Android command-line tools, one platform
+      API, one NDK; `cargo-ndk -t arm64-v8a` builds the `.so`; `uniffi-bindgen`
+      generates the Kotlin bindings.
 11. **Android.**
     - Pairing screen: ZXing QR scan, manual base32 entry and SAS confirmation.
     - LAN/WAN detection (§4).
