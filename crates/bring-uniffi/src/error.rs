@@ -6,22 +6,24 @@ use bring_core::api::ErrorBody;
 use bring_core::db::DbError;
 use bring_core::pairing::{PairingError, PayloadError};
 
+// Fields are called `detail`, not `message`: UniFFI's Kotlin bindings also
+// generate an `override val message` (Throwable), and the two would clash.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum MoonError {
     #[error("not paired with a Ring")]
     NotPaired,
     /// Connection refused, timeout, TLS failure (including a pin mismatch).
-    #[error("network error: {message}")]
-    Network { message: String },
+    #[error("network error: {detail}")]
+    Network { detail: String },
     /// The Ring answered with an error status.
-    #[error("the Ring answered {status} ({code}): {message}")]
+    #[error("the Ring answered {status} ({code}): {detail}")]
     Server {
         status: u16,
         code: String,
-        message: String,
+        detail: String,
     },
-    #[error("pairing failed: {message}")]
-    Pairing { message: String },
+    #[error("pairing failed: {detail}")]
+    Pairing { detail: String },
     /// Not approved on the Ring yet; call `pair_finish` again.
     #[error("still waiting for approval on the Ring")]
     PairingPending,
@@ -30,21 +32,21 @@ pub enum MoonError {
     #[error("the pairing session expired")]
     PairingExpired,
     /// Local database or filesystem error.
-    #[error("storage error: {message}")]
-    Storage { message: String },
-    #[error("invalid input: {message}")]
-    Invalid { message: String },
+    #[error("storage error: {detail}")]
+    Storage { detail: String },
+    #[error("invalid input: {detail}")]
+    Invalid { detail: String },
     #[error("cancelled")]
     Cancelled,
 }
 
 impl MoonError {
     pub(crate) fn invalid(m: impl Into<String>) -> Self {
-        Self::Invalid { message: m.into() }
+        Self::Invalid { detail: m.into() }
     }
 
     pub(crate) fn storage(m: impl Into<String>) -> Self {
-        Self::Storage { message: m.into() }
+        Self::Storage { detail: m.into() }
     }
 
     /// The Ring's error code, if this is a server error.
@@ -71,12 +73,12 @@ impl MoonError {
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_owned))
                     .unwrap_or_default(),
-                message: b.message,
+                detail: b.message,
             },
             Err(_) => Self::Server {
                 status,
                 code: String::new(),
-                message: String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned(),
+                detail: String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned(),
             },
         }
     }
@@ -96,7 +98,7 @@ fn chain(e: &dyn StdError) -> String {
 
 impl From<reqwest::Error> for MoonError {
     fn from(e: reqwest::Error) -> Self {
-        Self::Network { message: chain(&e) }
+        Self::Network { detail: chain(&e) }
     }
 }
 
@@ -121,7 +123,7 @@ impl From<std::io::Error> for MoonError {
 impl From<PairingError> for MoonError {
     fn from(e: PairingError) -> Self {
         Self::Pairing {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 }

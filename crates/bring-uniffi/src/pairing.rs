@@ -174,7 +174,7 @@ impl Moon {
             .verifier
             .observed()
             .ok_or_else(|| MoonError::Pairing {
-                message: "the Ring's TLS certificate changed during pairing".into(),
+                detail: "the Ring's TLS certificate changed during pairing".into(),
             })?;
         let result = pending.verified.open_result(&sealed, &observed)?;
         let row = store::save_ring(&self.db(), &result, pending.device_uuid)?;
