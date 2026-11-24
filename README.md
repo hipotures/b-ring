@@ -23,6 +23,9 @@ bring pair                          # QR code + code for manual entry
 bring devices
 bring rename <slug|id> <name>
 bring revoke <slug|id>
+
+# Later updates (rebuilds bringd + bring, updates unit, restarts safely):
+./dist/update-ring.sh --pull
 ```
 
 `bringd` works without a config file. To change defaults, create
