@@ -77,7 +77,11 @@ fun BrowserScreen(
     header: @Composable () -> Unit,
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
-    val counts = remember(entries) { entries.groupingBy { it.state }.eachCount() }
+    // Counts cover this folder and its subfolders, like the list below.
+    val here = remember(entries, dir) {
+        if (dir.isEmpty()) entries else entries.filter { it.ringPath.startsWith("$dir/") }
+    }
+    val counts = remember(here) { here.groupingBy { it.state }.eachCount() }
     val shown = remember(entries, filter) {
         if (filter.state == null) entries else entries.filter { it.state == filter.state }
     }
@@ -94,7 +98,7 @@ fun BrowserScreen(
                 selected = filter,
                 onSelect = { filter = it },
                 label = { it.label },
-                sub = { f -> "${if (f.state == null) entries.size else counts[f.state] ?: 0}" },
+                sub = { f -> "${if (f.state == null) here.size else counts[f.state] ?: 0}" },
                 modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
             )
             HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
@@ -102,7 +106,11 @@ fun BrowserScreen(
         if (rows.isEmpty()) {
             item {
                 Text(
-                    if (entries.isEmpty()) "Nothing here yet. Files appear as they are synced." else "No files match.",
+                    when {
+                        entries.isEmpty() -> "Nothing here yet. Files appear as they are synced."
+                        filter.state != null -> "No ${filter.label.lowercase()} files in this folder."
+                        else -> "No files match."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Tm.colors.text2,
                     modifier = Modifier.padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space6),

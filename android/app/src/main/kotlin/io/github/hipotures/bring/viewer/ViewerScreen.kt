@@ -5,6 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.background
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.Text
@@ -92,21 +99,25 @@ fun ViewerScreen(entryId: Long, route: RouteStatus) {
 
     // Media fills the screen; for other files the details are the content.
     val media = playable && kind != MediaKind.OTHER
+    var details by rememberSaveable(e.ringPath) { mutableStateOf(!media) }
+    // Back closes the details first, then the file.
+    BackHandler(enabled = media && details) { details = false }
     Column(Modifier.fillMaxSize()) {
         when {
             kind == MediaKind.IMAGE && playable -> Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
-                ZoomableImage(local ?: RingImage(e.remoteFileId!!, e.blake3, e.size))
+                ZoomableImage(local ?: RingImage(e.remoteFileId!!, e.blake3, e.size), onDoubleTap = { details = !details })
             }
             (kind == MediaKind.VIDEO || kind == MediaKind.AUDIO) && playable ->
                 Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) { MediaPlayer(e, local) }
             else -> {}
         }
-        InfoBar(e, name, kind, local, route, media, if (media) Modifier else Modifier.weight(1f))
+        InfoBar(e, name, kind, local, route, media, details, { details = it }, if (media) Modifier else Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun ZoomableImage(model: Any) {
+/** Pinch to zoom; double tap shows or hides the details (and resets the zoom). */
+private fun ZoomableImage(model: Any, onDoubleTap: () -> Unit) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var loading by remember { mutableStateOf(true) }
@@ -118,6 +129,13 @@ private fun ZoomableImage(model: Any) {
             onState = { loading = it is coil3.compose.AsyncImagePainter.State.Loading },
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = {
+                        scale = 1f
+                        offset = Offset.Zero
+                        onDoubleTap()
+                    })
+                }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         scale = (scale * zoom).coerceIn(1f, 8f)
@@ -147,13 +165,14 @@ private fun InfoBar(
     local: File?,
     route: RouteStatus,
     media: Boolean,
+    open: Boolean,
+    onOpen: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
     val c = Tm.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
-    var open by rememberSaveable(e.ringPath) { mutableStateOf(!media) }
     Column(modifier.fillMaxWidth().background(c.surface)) {
         HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         Row(
@@ -174,9 +193,8 @@ private fun InfoBar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable(enabled = media) { open = !open }
                 .heightIn(min = 48.dp)
-                .padding(start = TmDimens.regionPad, end = TmDimens.space3),
+                .padding(start = TmDimens.regionPad),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
@@ -190,7 +208,22 @@ private fun InfoBar(
                 modifier = Modifier.weight(1f),
             )
             if (media) {
-                Text(if (open) "Less" else "Details", style = MaterialTheme.typography.labelMedium, color = c.link)
+                Row(
+                    Modifier
+                        .clickable { onOpen(!open) }
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = TmDimens.space3),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1),
+                ) {
+                    Text("Details", style = MaterialTheme.typography.labelMedium, color = c.link)
+                    Icon(
+                        if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
+                        contentDescription = null,
+                        tint = c.link,
+                        modifier = Modifier.size(TmDimens.iconLg),
+                    )
+                }
             }
         }
         if (open) {
