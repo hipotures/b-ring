@@ -125,7 +125,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
         when (screen) {
             Screen.HOME -> {
                 TopStrip(
-                    title = if (multiRing) active.name else "B-Ring",
+                    title = active.name,
                     route = route,
                     sync = sync,
                     onBack = if (dir.isEmpty()) null else ({ dir = parentOf(dir) }),
@@ -156,6 +156,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     },
                     uploading = sync.path.takeIf { sync.running && sync.ringId == active.ringId },
                     onFreeLocal = vm::freeLocal,
+                    ringName = active.name,
                 )
             }
             Screen.VIEW -> {

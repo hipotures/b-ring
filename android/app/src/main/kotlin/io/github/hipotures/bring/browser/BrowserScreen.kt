@@ -89,6 +89,8 @@ fun BrowserScreen(
     uploading: String? = null,
     /** Delete the local copies of these synced files (they stay on the Ring). */
     onFreeLocal: (List<Entry>) -> Unit = {},
+    /** Custom name of the active Ring, shown as the breadcrumb root. */
+    ringName: String = "Ring",
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
@@ -119,7 +121,7 @@ fun BrowserScreen(
         contentPadding = PaddingValues(bottom = if (selecting) 160.dp else TmDimens.space6),
     ) {
         item { Box(Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2)) { header() } }
-        item { Breadcrumbs(dir, onDir) }
+        item { Breadcrumbs(dir, onDir, rootLabel = ringName) }
         item {
             Segmented(
                 options = Filter.entries,
@@ -253,7 +255,7 @@ private fun SelectionBar(
 }
 
 @Composable
-private fun Breadcrumbs(dir: String, onDir: (String) -> Unit) {
+private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String = "Ring") {
     Row(
         Modifier
             .fillMaxWidth()
@@ -261,7 +263,7 @@ private fun Breadcrumbs(dir: String, onDir: (String) -> Unit) {
             .padding(horizontal = TmDimens.space1),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Crumb("Ring", current = dir.isEmpty()) { onDir("") }
+        Crumb(rootLabel, current = dir.isEmpty()) { onDir("") }
         crumbs(dir).forEach { (name, path) ->
             Text("/", style = Tm.text.code, color = Tm.colors.text3)
             Crumb(name, current = path == dir) { onDir(path) }
