@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use bringd::serve::{self, Servers};
 use bringd::{Config, Ring};
 use tracing::{error, info};
 
@@ -61,19 +62,30 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let listener = match tokio::net::TcpListener::bind(config.lan_listen).await {
-        Ok(l) => l,
-        Err(e) => {
-            error!("cannot listen on {}: {e}", config.lan_listen);
-            return ExitCode::FAILURE;
-        }
-    };
-    info!(addr = %config.lan_listen, ring_id = %ring.ring_id, "bringd listening");
-    if let Err(e) = axum::serve(listener, ring.router())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-    {
-        error!("server error: {e}");
+    info!(
+        lan = %config.lan_listen,
+        proxy = ?config.proxy_listen,
+        ring_id = %ring.ring_id,
+        tls_sha256 = %ring.tls.fingerprint_hex(),
+        "bringd starting"
+    );
+
+    let servers = Servers::default();
+    let stopper = servers.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        stopper.shutdown();
+    });
+    let served = serve::serve(
+        ring.router(),
+        &ring.tls,
+        config.lan_listen,
+        config.proxy_listen,
+        servers,
+    )
+    .await;
+    if let Err(e) = served {
+        error!("{e}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS

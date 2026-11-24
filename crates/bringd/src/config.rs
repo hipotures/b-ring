@@ -13,8 +13,13 @@ pub struct Config {
     pub ring_root: PathBuf,
     /// Index database, thumbnails and TLS material. `~/` is expanded.
     pub data_dir: PathBuf,
-    /// LAN listener address.
+    /// LAN HTTPS listener address.
     pub lan_listen: SocketAddr,
+    /// Optional plain-HTTP listener for a TLS-terminating reverse proxy.
+    /// Bind it to loopback (or a tunnel address), never to the LAN.
+    pub proxy_listen: Option<SocketAddr>,
+    /// External HTTPS URL behind the reverse proxy, handed to Moons.
+    pub wan_url: Option<String>,
     /// Logical folders created on start.
     pub folders: Vec<String>,
     /// How long a path must be quiet before the watcher reports it.
@@ -29,6 +34,8 @@ impl Default for Config {
             ring_root: home_dir().join("B-Ring"),
             data_dir: xdg_dir("XDG_DATA_HOME", ".local/share").join("bring"),
             lan_listen: SocketAddr::from(([0, 0, 0, 0], 7443)),
+            proxy_listen: None,
+            wan_url: None,
             folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),
@@ -87,6 +94,10 @@ impl Config {
 
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("ring.db")
+    }
+
+    pub fn tls_dir(&self) -> PathBuf {
+        self.data_dir.join("tls")
     }
 
     pub fn thumbs_dir(&self) -> PathBuf {

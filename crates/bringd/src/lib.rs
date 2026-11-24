@@ -8,10 +8,12 @@ pub mod devices;
 pub mod hasher;
 pub mod ring;
 pub mod scanner;
+pub mod serve;
 pub mod server;
 pub mod store;
 pub mod stream;
 pub mod thumbs;
+pub mod tls;
 pub mod uploads;
 pub mod watcher;
 

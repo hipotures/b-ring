@@ -12,6 +12,7 @@ use crate::scanner::{self, RESERVED_DIR};
 use crate::server::{self, AppState};
 use crate::store::{self, Db};
 use crate::thumbs::ThumbStore;
+use crate::tls::{TlsError, TlsIdentity};
 use crate::uploads::{self, Uploads};
 use crate::watcher::{self, WatcherHandle};
 
@@ -24,6 +25,8 @@ pub enum StartError {
     },
     #[error(transparent)]
     Db(#[from] bring_core::db::DbError),
+    #[error(transparent)]
+    Tls(#[from] TlsError),
     #[error("cannot watch the Ring directory: {0}")]
     Watch(#[from] notify_debouncer_full::notify::Error),
 }
@@ -36,6 +39,7 @@ pub struct Ring {
     pub ring_id: String,
     pub thumbs: ThumbStore,
     pub uploads: Uploads,
+    pub tls: TlsIdentity,
     stream_key: [u8; 32],
     _watcher: WatcherHandle,
 }
@@ -62,6 +66,7 @@ impl Ring {
             mkdir(root.join(folder))?;
         }
 
+        let tls = TlsIdentity::load_or_create(&config.tls_dir())?;
         let db = Db::open(&config.db_path())?;
         let ring_id = store::ring_id_hex(&db.lock())?;
         let stream_key: [u8; 32] = bring_core::db::ring_meta_blob(&db.lock(), "stream_key")?;
@@ -98,6 +103,7 @@ impl Ring {
             ring_id,
             thumbs,
             uploads,
+            tls,
             stream_key,
             _watcher: watcher,
         })
