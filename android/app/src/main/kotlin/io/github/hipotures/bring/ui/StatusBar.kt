@@ -186,7 +186,7 @@ private fun SyncBlock(sync: SyncUi) {
                 style = Tm.text.code,
                 color = c.text2,
                 maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

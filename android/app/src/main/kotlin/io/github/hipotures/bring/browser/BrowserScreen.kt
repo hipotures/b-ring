@@ -224,7 +224,7 @@ private fun Name(text: String) {
         style = MaterialTheme.typography.bodyMedium,
         fontWeight = FontWeight.Medium,
         color = Tm.colors.text,
-        maxLines = 2,
+        maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
 }

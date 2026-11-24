@@ -5,11 +5,19 @@ import android.content.Context
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -50,7 +58,6 @@ import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.ui.BadgeChip
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.KeyValue
-import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.SharpButton
 import io.github.hipotures.bring.ui.badgesFor
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +67,7 @@ import themechanics.compose.Tm
 import themechanics.compose.TmDimens
 import java.io.File
 
-/** One file: media on top, details and actions below. */
+/** One file: media fills the screen, a compact info bar below. */
 @Composable
 fun ViewerScreen(entryId: Long, route: RouteStatus) {
     val context = LocalContext.current
@@ -83,6 +90,8 @@ fun ViewerScreen(entryId: Long, route: RouteStatus) {
     val local = remember(e) { e.localPath?.let(::File)?.takeIf { it.isFile } }
     val playable = local != null || e.remoteFileId != null
 
+    // Media fills the screen; for other files the details are the content.
+    val media = playable && kind != MediaKind.OTHER
     Column(Modifier.fillMaxSize()) {
         when {
             kind == MediaKind.IMAGE && playable -> Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
@@ -92,7 +101,7 @@ fun ViewerScreen(entryId: Long, route: RouteStatus) {
                 Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) { MediaPlayer(e, local) }
             else -> {}
         }
-        Details(e, name, kind, local, route, Modifier.then(if (kind == MediaKind.OTHER || !playable) Modifier.weight(1f) else Modifier))
+        InfoBar(e, name, kind, local, route, media, if (media) Modifier else Modifier.weight(1f))
     }
 }
 
@@ -126,52 +135,101 @@ private fun ZoomableImage(model: Any) {
     }
 }
 
+/**
+ * Name (one line, cut at the end) and "Open with…"; state, size and date;
+ * full paths and hash, selectable and copyable, only when asked for.
+ */
 @Composable
-private fun Details(
+private fun InfoBar(
     e: Entry,
     name: String,
     kind: MediaKind,
     local: File?,
     route: RouteStatus,
+    media: Boolean,
     modifier: Modifier,
 ) {
+    val c = Tm.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(TmDimens.panelPad)) {
-        Panel(title = name) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
-                badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
-            }
-            KeyValue("On the Ring", e.ringPath)
-            KeyValue("On this device", e.localPath ?: "— (on the Ring only)")
-            KeyValue("Size", "${formatBytes(e.size)} (${e.size} B)")
-            KeyValue("Modified", formatMtime(e.mtimeNs))
-            KeyValue("Type", e.mime ?: extensionOf(name).ifEmpty { "?" })
-            e.blake3?.let { KeyValue("BLAKE3", it.take(16) + "…") }
-            e.lastError?.let { KeyValue("Error", it) }
-            if (e.suppressed) KeyValue("Note", "Held: removed on the Ring, never uploaded again")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
-                if (local != null) {
-                    SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })
-                }
-                // External players cannot pin the LAN certificate (§3.1).
-                val fileId = e.remoteFileId
-                if (fileId != null && route == RouteStatus.WAN && kind != MediaKind.IMAGE) {
-                    SharpButton("External player", onClick = {
-                        scope.launch {
-                            message = try {
-                                val url = withContext(Dispatchers.IO) { context.bring.moon.streamUrl(fileId) }
-                                openUrl(context, url, e.mime)
-                            } catch (ex: Exception) {
-                                ex.describe()
-                            }
-                        }
-                    })
-                }
-            }
-            message?.let { ErrorLine(it) }
+    var open by rememberSaveable(e.ringPath) { mutableStateOf(!media) }
+    Column(modifier.fillMaxWidth().background(c.surface)) {
+        HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
+        Row(
+            Modifier.fillMaxWidth().padding(start = TmDimens.regionPad, end = TmDimens.space3, top = TmDimens.space1),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+        ) {
+            Text(
+                name,
+                style = MaterialTheme.typography.titleSmall,
+                color = c.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (local != null) SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })
         }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(enabled = media) { open = !open }
+                .heightIn(min = 48.dp)
+                .padding(start = TmDimens.regionPad, end = TmDimens.space3),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+        ) {
+            badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
+            Text(
+                "${formatBytes(e.size)} · ${formatMtime(e.mtimeNs)}",
+                style = Tm.text.numeric,
+                color = c.text2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (media) {
+                Text(if (open) "Less" else "Details", style = MaterialTheme.typography.labelMedium, color = c.link)
+            }
+        }
+        if (open) {
+            HorizontalDivider(thickness = TmDimens.bw3, color = c.line3)
+            SelectionContainer(
+                Modifier
+                    .then(if (media) Modifier.heightIn(max = 320.dp) else Modifier.weight(1f))
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Column(
+                    Modifier.padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space3),
+                    verticalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                ) {
+                    KeyValue("On the Ring", e.ringPath, copy = true)
+                    KeyValue("On this device", e.localPath ?: "— (on the Ring only)", copy = e.localPath != null)
+                    KeyValue("Size", "${formatBytes(e.size)} (${e.size} B)")
+                    KeyValue("Modified", formatMtime(e.mtimeNs))
+                    KeyValue("Type", e.mime ?: extensionOf(name).ifEmpty { "?" })
+                    e.blake3?.let { KeyValue("BLAKE3", it, copy = true) }
+                    e.lastError?.let { KeyValue("Error", it) }
+                    if (e.suppressed) KeyValue("Note", "Held: removed on the Ring, never uploaded again")
+                    // External players cannot pin the LAN certificate (§3.1).
+                    val fileId = e.remoteFileId
+                    if (fileId != null && route == RouteStatus.WAN && kind != MediaKind.IMAGE) {
+                        SharpButton("External player", onClick = {
+                            scope.launch {
+                                message = try {
+                                    val url = withContext(Dispatchers.IO) { context.bring.moon.streamUrl(fileId) }
+                                    openUrl(context, url, e.mime)
+                                } catch (ex: Exception) {
+                                    ex.describe()
+                                }
+                            }
+                        })
+                    }
+                }
+            }
+        }
+        message?.let { Box(Modifier.padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2)) { ErrorLine(it) } }
     }
 }
 

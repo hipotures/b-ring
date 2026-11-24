@@ -91,11 +91,13 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
                 color = c.text,
                 modifier = Modifier.weight(1f),
             )
+            if (r.files.isNotEmpty()) {
+                Text(if (expanded) "Hide files" else "Show files", style = MaterialTheme.typography.labelMedium, color = c.link)
+            }
             if (r.error != null) Tag("Failed", TmTone.Danger)
         }
         Text(roundDetail(r), style = MaterialTheme.typography.bodyMedium, color = if (r.error != null) c.danger else c.text2)
-        Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
-            Text(
+        Text(
                 listOfNotNull(
                     formatWhen(r.endedAt),
                     r.route.ifEmpty { null },
@@ -105,16 +107,11 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
                 ).joinToString(" · ") { it.replace(' ', '\u00A0') },
                 style = Tm.text.numeric,
                 color = c.text2,
-                modifier = Modifier.weight(1f, fill = false),
             )
-            if (r.files.isNotEmpty()) {
-                Text(if (expanded) "Hide files" else "Show files", style = MaterialTheme.typography.labelMedium, color = c.link)
-            }
-        }
         if (expanded) {
             Column(Modifier.padding(top = TmDimens.space1_5), verticalArrangement = Arrangement.spacedBy(TmDimens.space0_5)) {
                 r.files.asReversed().forEach {
-                    Text(it, style = Tm.text.code, color = c.text, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                    Text(it, style = Tm.text.code, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (r.uploaded > r.files.size) {
                     Text("… and ${r.uploaded - r.files.size} more", style = Tm.text.code, color = c.text2)

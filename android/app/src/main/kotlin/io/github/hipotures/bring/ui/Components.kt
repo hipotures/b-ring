@@ -1,5 +1,9 @@
 package io.github.hipotures.bring.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.Build
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -217,7 +222,8 @@ fun <T> Segmented(
 
 /** `key   value`: the label in `labelMedium`, the value in mono. */
 @Composable
-fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified) {
+fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified, copy: Boolean = false) {
+    val context = LocalContext.current
     Row(Modifier.fillMaxWidth()) {
         Text(
             key,
@@ -231,6 +237,23 @@ fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified) 
             color = if (valueColor == Color.Unspecified) Tm.colors.text else valueColor,
             modifier = Modifier.weight(1f),
         )
+        if (copy) {
+            Text(
+                "Copy",
+                style = MaterialTheme.typography.labelMedium,
+                color = Tm.colors.link,
+                modifier = Modifier
+                    .clickable {
+                        context.getSystemService(ClipboardManager::class.java)
+                            ?.setPrimaryClip(ClipData.newPlainText(key, value))
+                        // Android 13+ confirms copies itself.
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                            Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .padding(start = TmDimens.space3, top = 1.dp, bottom = TmDimens.space2),
+            )
+        }
     }
 }
 
