@@ -28,6 +28,7 @@ image = { version = "0.25.10", default-features = false, features = ["bmp", "gif
 mime_guess = "2.0.5"
 notify-debouncer-full = { version = "0.8.0", features = ["tokio"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "net", "signal", "time"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 toml = "1.2.2"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -10,6 +10,7 @@ pub mod ring;
 pub mod scanner;
 pub mod server;
 pub mod store;
+pub mod stream;
 pub mod thumbs;
 pub mod uploads;
 pub mod watcher;

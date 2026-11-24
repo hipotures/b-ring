@@ -164,3 +164,20 @@ pub struct UploadStatus {
     pub chunk_count: u32,
     pub received: Vec<u32>,
 }
+
+// ---------------------------------------------------------------------------
+// Streaming
+// ---------------------------------------------------------------------------
+
+/// Query parameter carrying a signed stream token.
+pub const STREAM_TOKEN_PARAM: &str = "st";
+
+/// `POST /files/{id}/stream-url`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamUrlResponse {
+    /// Path and query, relative to the Ring base URL the client used
+    /// (`/api/v1/files/{id}/content?st=...`). Works without headers.
+    pub url: String,
+    /// Unix seconds after which the URL stops working.
+    pub expires_at: i64,
+}

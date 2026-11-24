@@ -36,6 +36,7 @@ pub struct Ring {
     pub ring_id: String,
     pub thumbs: ThumbStore,
     pub uploads: Uploads,
+    stream_key: [u8; 32],
     _watcher: WatcherHandle,
 }
 
@@ -63,6 +64,7 @@ impl Ring {
 
         let db = Db::open(&config.db_path())?;
         let ring_id = store::ring_id_hex(&db.lock())?;
+        let stream_key: [u8; 32] = bring_core::db::ring_meta_blob(&db.lock(), "stream_key")?;
         let uploads = Uploads::new(root.clone(), staging, db.clone());
         let recovered = uploads::recover(&uploads)?;
         if recovered > 0 {
@@ -96,6 +98,7 @@ impl Ring {
             ring_id,
             thumbs,
             uploads,
+            stream_key,
             _watcher: watcher,
         })
     }
@@ -107,6 +110,7 @@ impl Ring {
             thumbs: self.thumbs.clone(),
             uploads: self.uploads.clone(),
             hashq: self.hashq.clone(),
+            stream_key: self.stream_key,
         })
     }
 }

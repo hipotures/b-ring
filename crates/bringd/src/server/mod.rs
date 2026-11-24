@@ -1,6 +1,7 @@
 //! HTTP API (`/api/v1`).
 
 pub mod auth;
+mod files;
 mod health;
 mod index;
 mod thumbs;
@@ -31,14 +32,20 @@ pub struct AppState {
     pub thumbs: ThumbStore,
     pub uploads: Uploads,
     pub hashq: HashQueue,
+    /// Key for signed stream URLs (`meta.stream_key`).
+    pub stream_key: [u8; 32],
 }
 
 /// Builds the API router.
 pub fn router(state: AppState) -> Router {
-    let public = Router::new().route("/api/v1/health", get(health::health));
+    let public = Router::new()
+        .route("/api/v1/health", get(health::health))
+        // Bearer *or* signed `?st=` token; checked in the handler.
+        .route("/api/v1/files/{id}/content", get(files::content));
     let device = Router::new()
         .route("/api/v1/index", get(index::index))
         .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))
+        .route("/api/v1/files/{id}/stream-url", post(files::stream_url))
         .route("/api/v1/uploads", post(uploads::create))
         .route(
             "/api/v1/uploads/{id}",
