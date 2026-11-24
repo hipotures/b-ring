@@ -21,6 +21,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.size
+import io.github.hipotures.bring.ui.FolderGlyph
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -84,16 +90,16 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
         message?.let { ErrorLine(it) }
 
         Panel(title = "Ring") {
-            KeyValue("device", ring.deviceSlug)
-            KeyValue("ring id", ring.ringId.take(16))
-            KeyValue("lan", ring.lanUrl)
-            KeyValue("wan", ring.wanUrl ?: "— (LAN only)")
-            KeyValue("tls pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …")
+            KeyValue("Device", ring.deviceSlug)
+            KeyValue("Ring ID", ring.ringId.take(16), code = true)
+            KeyValue("LAN", ring.lanUrl, code = true)
+            KeyValue("WAN", ring.wanUrl ?: "— (LAN only)", code = ring.wanUrl != null)
+            KeyValue("TLS pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …", code = true)
         }
 
         Panel(title = "Connection", trailing = { Tag(route.label, routeColor(route)) }) {
             Text(
-                "LAN when on unmetered Wi-Fi and the Ring answers within 500 ms; " +
+                "LAN when on unmetered Wi-Fi and the Ring answers within 1.5 s; " +
                     "otherwise WAN if configured. Background sync runs on LAN only.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = BringTheme.colors.dim,
@@ -134,11 +140,17 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             }
             folders.forEach { f ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(f.localDir, style = MetaStyle)
-                        Text("→ ${f.ringFolder}", style = MetaStyle, color = MaterialTheme.colorScheme.primary)
+                    Icon(FolderGlyph, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(
+                            f.localDir.removePrefix(StorageAccess.root().path + "/"),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text("on the Ring: ${f.ringFolder}", style = MetaStyle, color = BringTheme.colors.dim)
                     }
-                    SharpButton("Remove", onClick = { vm.removeFolder(f.id) }, danger = true)
+                    IconButton(onClick = { vm.removeFolder(f.id) }) {
+                        Icon(Icons.Filled.Delete, "Stop watching", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
             val watched = folders.map { it.localDir }.toSet()
@@ -146,7 +158,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                 if (storage) StorageAccess.suggestions().map { it.path }.filter { it !in watched } else emptyList()
             }
             if (suggestions.isNotEmpty()) {
-                Text("QUICK ADD", style = MetaStyle, color = BringTheme.colors.dim)
+                Text("Quick add", style = MaterialTheme.typography.bodyMedium, color = BringTheme.colors.dim)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     suggestions.forEach { path ->
                         SharpButton("+ ${path.substringAfterLast('/')}", onClick = { vm.addFolder(path) })
@@ -243,7 +255,7 @@ private fun NotificationRow() {
     var ok by remember { mutableStateOf(granted()) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok = it }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("NOTIFICATIONS", style = MetaStyle, color = BringTheme.colors.dim, modifier = Modifier.weight(1f))
+        Text("Notifications", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         if (ok) {
             Tag("ON", BringTheme.colors.synced)
         } else {

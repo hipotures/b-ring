@@ -18,7 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Technical minimalism: sharp 2dp corners, 1dp rules, dense type. */
+/** Technical minimalism: sharp 2dp corners, 1dp rules. */
 val Sharp = RoundedCornerShape(2.dp)
 val Hairline = 1.dp
 val Mono = FontFamily.Monospace
@@ -99,20 +99,23 @@ private val SharpShapes = Shapes(
     extraLarge = Sharp,
 )
 
-private val DenseType = Typography().run {
+// Plain sans type at Material sizes; only codes and hashes use monospace.
+private val BringType = Typography().run {
     copy(
-        titleLarge = titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-        titleMedium = titleMedium.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-        bodyLarge = bodyLarge.copy(fontSize = 15.sp),
-        bodyMedium = bodyMedium.copy(fontSize = 14.sp),
-        labelLarge = labelLarge.copy(fontFamily = Mono, fontSize = 13.sp, letterSpacing = 0.5.sp),
-        labelMedium = labelMedium.copy(fontFamily = Mono, fontSize = 12.sp),
-        labelSmall = labelSmall.copy(fontFamily = Mono, fontSize = 11.sp),
+        titleLarge = titleLarge.copy(fontSize = 21.sp, fontWeight = FontWeight.SemiBold),
+        titleMedium = titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+        titleSmall = titleSmall.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+        bodyLarge = bodyLarge.copy(fontSize = 16.sp),
+        bodyMedium = bodyMedium.copy(fontSize = 15.sp),
+        labelLarge = labelLarge.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.1.sp),
     )
 }
 
-/** Monospace metadata line (sizes, dates, hashes). */
-val MetaStyle = TextStyle(fontFamily = Mono, fontSize = 11.sp, letterSpacing = 0.sp)
+/** Secondary line: sizes, dates, counts (tabular figures). */
+val MetaStyle = TextStyle(fontSize = 13.sp, letterSpacing = 0.sp, fontFeatureSettings = "tnum")
+
+/** Codes, hashes and other strings read character by character. */
+val CodeStyle = TextStyle(fontFamily = Mono, fontSize = 14.sp, letterSpacing = 0.sp)
 
 val LocalBringColors = staticCompositionLocalOf { DarkBring }
 
@@ -122,7 +125,7 @@ fun BringTheme(dark: Boolean, content: @Composable () -> Unit) {
         MaterialTheme(
             colorScheme = if (dark) DarkScheme else LightScheme,
             shapes = SharpShapes,
-            typography = DenseType,
+            typography = BringType,
             content = content,
         )
     }

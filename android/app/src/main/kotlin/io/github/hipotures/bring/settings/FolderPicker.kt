@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -44,9 +46,9 @@ import androidx.compose.ui.window.DialogProperties
 import io.github.hipotures.bring.storage.subfolders
 import io.github.hipotures.bring.storage.volumes
 import io.github.hipotures.bring.ui.BringTheme
+import io.github.hipotures.bring.ui.FolderGlyph
 import io.github.hipotures.bring.ui.Hairline
 import io.github.hipotures.bring.ui.MetaStyle
-import io.github.hipotures.bring.ui.Mono
 import io.github.hipotures.bring.ui.Sharp
 import io.github.hipotures.bring.ui.SharpButton
 import io.github.hipotures.bring.ui.Tag
@@ -83,10 +85,11 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                 Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(start = 12.dp),
+                    .height(60.dp)
+                    .padding(start = 16.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("CHOOSE FOLDER", fontFamily = Mono, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Choose folder", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 IconButton(onDismiss) { Icon(Icons.Filled.Close, "Close") }
             }
             HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
@@ -111,16 +114,16 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                 Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Crumb(volume.label.uppercase(), current = atRoot) { path = volume.root.path }
+                Crumb(volume.label, current = atRoot) { path = volume.root.path }
                 var acc = volume.root.path
                 if (rel.isNotEmpty()) {
                     rel.split('/').forEach { part ->
                         acc = "$acc/$part"
                         val target = acc
-                        Text(" / ", style = MetaStyle, color = BringTheme.colors.dim)
+                        Text("›", style = MaterialTheme.typography.bodyLarge, color = BringTheme.colors.dim)
                         Crumb(part, current = target == path) { path = target }
                     }
                 }
@@ -130,7 +133,7 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
             LazyColumn(Modifier.weight(1f)) {
                 if (!atRoot) {
                     item {
-                        DirRow("..", note = "up") { path = dir.parent ?: volume.root.path }
+                        DirRow("Up one level", note = "up") { path = dir.parent ?: volume.root.path }
                         HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
@@ -153,7 +156,7 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(path, style = MetaStyle.copy(fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
+                Text(path, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
                 val already = path in watched
                 SharpButton(
                     when {
@@ -175,13 +178,12 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
 private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
     Text(
         text,
-        fontFamily = Mono,
-        fontSize = 13.sp,
-        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+        style = MaterialTheme.typography.bodyLarge,
+        fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
         color = if (current) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary,
         modifier = Modifier
             .clickable(enabled = !current, onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 2.dp),
+            .padding(vertical = 12.dp, horizontal = 8.dp),
     )
 }
 
@@ -191,22 +193,16 @@ private fun DirRow(name: String, note: String? = null, watched: Boolean = false,
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(36.dp)
-                .border(Hairline, MaterialTheme.colorScheme.primary, Sharp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                if (note == "up") "↑" else "DIR",
-                style = MetaStyle.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.primary,
-            )
+        if (note == "up") {
+            Text("↑", fontSize = 22.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(28.dp))
+        } else {
+            Icon(FolderGlyph, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(14.dp))
         Text(
             name,
             style = MaterialTheme.typography.bodyLarge,
@@ -215,7 +211,7 @@ private fun DirRow(name: String, note: String? = null, watched: Boolean = false,
             modifier = Modifier.weight(1f),
         )
         if (watched) Tag("WATCHED", BringTheme.colors.synced)
-        Text(" ›", fontFamily = Mono, fontSize = 18.sp, color = BringTheme.colors.dim)
+        Text(" ›", fontSize = 22.sp, color = BringTheme.colors.dim)
     }
 }
 

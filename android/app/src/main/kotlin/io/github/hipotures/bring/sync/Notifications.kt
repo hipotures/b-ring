@@ -16,6 +16,7 @@ import io.github.hipotures.bring.formatBytes
 object Notifications {
     const val CHANNEL_SYNC = "sync"
     const val ID_SYNC = 1
+    const val ID_DONE = 2
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -51,6 +52,26 @@ object Notifications {
             if (upload.total > 0) b.setProgress(100, (upload.sent * 100 / upload.total).toInt(), false)
         }
         return b.build()
+    }
+
+    /** Summary of a finished round that changed something (or failed). */
+    fun done(context: Context, r: SyncRound): Notification {
+        val open = PendingIntent.getActivity(
+            context,
+            1,
+            Intent(context, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_ACTIVITY, true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return NotificationCompat.Builder(context, CHANNEL_SYNC)
+            .setSmallIcon(R.drawable.ic_stat_sync)
+            .setContentTitle(roundTitle(r))
+            .setContentText(roundDetail(r))
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
     }
 
     fun syncForeground(context: Context, upload: Upload?) = ForegroundInfo(

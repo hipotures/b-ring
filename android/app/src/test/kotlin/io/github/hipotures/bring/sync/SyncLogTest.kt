@@ -1,0 +1,52 @@
+package io.github.hipotures.bring.sync
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import java.nio.file.Files
+
+class SyncLogTest {
+    private fun round(
+        uploaded: Int = 0,
+        manual: Boolean = false,
+        error: String? = null,
+        files: List<String> = emptyList(),
+        at: Long = 1_000,
+    ) = SyncRound(at, 1500, manual, "LAN", uploaded, uploaded * 10L, 0, 0, 0, 0, 0, error, files)
+
+    @Test
+    fun roundTripsThroughOneLine() {
+        val r = round(uploaded = 2, manual = true, error = "bad\tthing\nhere", files = listOf("DCIM/a b.jpg", "x\ty"))
+        val back = SyncRound.decode(SyncRound.encode(r))!!
+        assertEquals(r.copy(error = "bad thing here", files = listOf("DCIM/a b.jpg", "x y")), back)
+        assertEquals(round(), SyncRound.decode(SyncRound.encode(round())))
+        assertNull(SyncRound.decode("garbage"))
+    }
+
+    @Test
+    fun keepsChangedOrManualRoundsNewestFirstAndPersists() {
+        val dir = Files.createTempDirectory("synclog").toFile()
+        try {
+            val file = dir.resolve("log.tsv")
+            val log = SyncLog(file, keep = 2)
+            log.add(round(uploaded = 1, at = 1))
+            log.add(round(at = 2)) // idle background check: not listed
+            log.add(round(manual = true, at = 3))
+            log.add(round(error = "x", at = 4))
+            assertEquals(listOf(4L, 3L), log.rounds.value.map { it.endedAt })
+            assertEquals(4L, log.lastChecked.value)
+            assertEquals(listOf(4L, 3L), SyncLog(file).rounds.value.map { it.endedAt })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun titlesAndDetails() {
+        assertEquals("Uploaded 2 files (20 B)", roundTitle(round(uploaded = 2)))
+        assertEquals("Sync failed", roundTitle(round(error = "Ring unreachable")))
+        assertEquals("Ring unreachable", roundDetail(round(error = "Ring unreachable")))
+        assertEquals("Nothing new", roundTitle(round()))
+        assertEquals("Everything is in sync", roundDetail(round()))
+    }
+}

@@ -40,6 +40,7 @@ import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.isValidPairingCode
 import io.github.hipotures.bring.versionLine
 import io.github.hipotures.bring.ui.BringTheme
+import io.github.hipotures.bring.ui.CodeStyle
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.MetaStyle
 import io.github.hipotures.bring.ui.Mono
@@ -73,7 +74,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("PAIR WITH A RING", style = MaterialTheme.typography.titleLarge, fontFamily = Mono)
+        Text("Pair with a Ring", style = MaterialTheme.typography.titleLarge)
         Text(
             "Run `bring pair` on the Ring. Scan its QR code, or type the code printed under it.",
             style = MaterialTheme.typography.bodyMedium,
@@ -88,7 +89,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
             }
             else -> {
                 Panel(
-                    title = "1 · Code",
+                    title = "1. Pairing code",
                     trailing = {
                         when {
                             code.isBlank() -> {}
@@ -128,7 +129,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Panel(title = "2 · This device") {
+                Panel(title = "2. This device") {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -154,7 +155,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
 
 @Composable
 private fun VerifyPanel(s: PairState.Verify, onCancel: () -> Unit) {
-    Panel(title = "3 · Verify") {
+    Panel(title = "3. Verify") {
         Text(
             "Check that the Ring shows the same code, then approve there (y).",
             style = MaterialTheme.typography.bodyMedium,
@@ -171,8 +172,7 @@ private fun VerifyPanel(s: PairState.Verify, onCancel: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 s.ringUrl,
-                fontFamily = Mono,
-                fontSize = 12.sp,
+                style = CodeStyle,
                 color = BringTheme.colors.dim,
                 modifier = Modifier.weight(1f),
             )

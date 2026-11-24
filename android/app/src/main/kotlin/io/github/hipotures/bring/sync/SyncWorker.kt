@@ -42,8 +42,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
         bring.route.value = RouteStatus.of(route)
         if (!RoutePolicy.mayRun(trigger, route)) {
-            val why = if (route == null) "Ring unreachable" else "not on the Ring's LAN"
-            return@withContext if (trigger == Trigger.MANUAL) failure(why) else Result.success()
+            val why = if (route == null) "Ring unreachable" else "Not on the Ring's LAN"
+            if (trigger != Trigger.MANUAL) return@withContext Result.success()
+            record(SyncRound(System.currentTimeMillis(), 0, true, route?.name ?: "", 0, 0, 0, 0, 0, 0, 0, why, emptyList()))
+            return@withContext failure(why)
         }
 
         try {
@@ -54,9 +56,28 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             Log.w(TAG, "running without a foreground service: $e")
         }
 
+        val started = SystemClock.elapsedRealtime()
+        val progress = Progress()
+        fun round(report: SyncReport?, error: String?) = SyncRound(
+            endedAt = System.currentTimeMillis(),
+            durationMs = SystemClock.elapsedRealtime() - started,
+            manual = trigger == Trigger.MANUAL,
+            route = route?.name ?: "",
+            uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completed.size,
+            uploadedBytes = progress.completedBytes,
+            // The Ring's index echoes this device's own uploads back.
+            received = report?.let { (it.index.received.toInt() - (it.outbox.uploaded + it.outbox.deduplicated).toInt()).coerceAtLeast(0) } ?: 0,
+            found = report?.let { (it.scan.newFiles + it.scan.changed).toInt() } ?: 0,
+            offloaded = report?.outbox?.offloaded?.toInt() ?: 0,
+            failed = report?.outbox?.failed?.toInt() ?: 0,
+            remaining = report?.outbox?.remaining?.toInt() ?: 0,
+            error = error,
+            files = progress.completed.toList(),
+        )
+
         try {
             val report = coroutineScope {
-                val run = async { moon.runSync(Progress()) }
+                val run = async { moon.runSync(progress) }
                 try {
                     run.await()
                 } catch (e: CancellationException) {
@@ -65,13 +86,27 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     throw e
                 }
             }
+            record(round(report, null))
             Result.success(summary(report))
         } catch (e: MoonException.Cancelled) {
             Result.retry()
         } catch (e: MoonException.Network) {
+            record(round(null, e.describe()))
             if (trigger == Trigger.MANUAL) failure(e.describe()) else Result.retry()
         } catch (e: MoonException) {
+            record(round(null, e.describe()))
             failure(e.describe())
+        }
+    }
+
+    /** Log the round and, if anything happened, say so in a notification. */
+    private fun record(round: SyncRound) {
+        applicationContext.bring.syncLog.add(round)
+        if (round.changed) {
+            runCatching {
+                applicationContext.getSystemService(NotificationManager::class.java)
+                    .notify(Notifications.ID_DONE, Notifications.done(applicationContext, round))
+            }
         }
     }
 
@@ -98,6 +133,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private var files = 0
         private val nm = applicationContext.getSystemService(NotificationManager::class.java)
 
+        /** Ring paths fully sent in this round (the last [SyncRound.MAX_FILES]). */
+        val completed = ArrayDeque<String>()
+        @Volatile var completedBytes = 0L
+            private set
+
         @Synchronized
         override fun onUploadProgress(ringPath: String, sentBytes: ULong, totalBytes: ULong) {
             val sent = sentBytes.toLong()
@@ -108,6 +148,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 files++
             }
             currentSent = sent
+            if (sent >= total && completed.lastOrNull() != ringPath) {
+                completed.addLast(ringPath)
+                completedBytes += total
+                if (completed.size > SyncRound.MAX_FILES) completed.removeFirst()
+            }
             val now = SystemClock.elapsedRealtime()
             if (now - lastAt < 1_000) return
             lastAt = now

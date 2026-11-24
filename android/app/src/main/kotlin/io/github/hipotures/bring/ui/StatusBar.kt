@@ -1,15 +1,17 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -25,10 +27,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.hipotures.bring.SyncUi
 import io.github.hipotures.bring.formatBytes
+import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.RouteStatus
+import io.github.hipotures.bring.sync.SyncRound
+import io.github.hipotures.bring.sync.roundTitle
 
 @Composable
 fun routeColor(route: RouteStatus): Color = when (route) {
@@ -38,7 +42,10 @@ fun routeColor(route: RouteStatus): Color = when (route) {
     RouteStatus.UNKNOWN -> BringTheme.colors.dim
 }
 
-/** Title row with the route tag, sync control and an optional back arrow. */
+/**
+ * App bar: title, route, actions (48dp targets), then what sync is doing:
+ * progress while a round runs, otherwise the last round's outcome.
+ */
 @Composable
 fun TopStrip(
     title: String,
@@ -46,50 +53,70 @@ fun TopStrip(
     sync: SyncUi,
     onBack: (() -> Unit)? = null,
     onSync: (() -> Unit)? = null,
+    onActivity: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
+    lastRound: SyncRound? = null,
 ) {
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer)) {
         Row(
-            Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (onBack != null) {
                 IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            } else {
-                Text(
-                    "B·RING",
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
             }
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (title == "B-Ring") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
-                overflow = TextOverflow.StartEllipsis,
-                modifier = Modifier.weight(1f),
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = if (onBack == null) 12.dp else 4.dp),
             )
             Tag(route.label, routeColor(route))
             if (onSync != null) {
-                IconButton(onSync, enabled = !sync.running) {
-                    Icon(Icons.Filled.Refresh, "Sync now", Modifier.size(22.dp))
-                }
+                IconButton(onSync, enabled = !sync.running) { Icon(Icons.Filled.Refresh, "Sync now") }
+            }
+            if (onActivity != null) {
+                IconButton(onActivity) { Icon(Icons.AutoMirrored.Filled.List, "Sync activity") }
             }
             if (onSettings != null) {
-                IconButton(onSettings) { Icon(Icons.Filled.Settings, "Settings", Modifier.size(22.dp)) }
+                IconButton(onSettings) { Icon(Icons.Filled.Settings, "Settings") }
             }
         }
-        if (sync.running) SyncBlock(sync)
+        when {
+            sync.running -> SyncBlock(sync)
+            lastRound != null && onSync != null -> LastRound(lastRound, onActivity)
+        }
         HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
     }
 }
 
+/** "Uploaded 12 files (34 MiB) · Today 19:24", tappable to the history. */
+@Composable
+private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 40.dp)
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "${roundTitle(r)} · ${formatWhen(r.endedAt)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (r.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 /**
- * What a running round is doing. The first line (file count, bytes) is the
- * stable one; the current file name below changes at most once a second.
+ * A running round. The first line (file count, bytes) is the stable one;
+ * the current file name below changes at most once a second.
  */
 @Composable
 private fun SyncBlock(sync: SyncUi) {
@@ -97,17 +124,14 @@ private fun SyncBlock(sync: SyncUi) {
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tag(if (path != null) "UPLOAD" else "SYNC", MaterialTheme.colorScheme.primary)
-            Text(
-                if (path != null) "${sync.files} files · ${formatBytes(sync.bytes)} sent" else "Checking the Ring and local folders…",
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-            )
-        }
+        Text(
+            if (path != null) "Uploading · ${sync.files} files · ${formatBytes(sync.bytes)}" else "Checking the Ring and local folders…",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+        )
         // A determinate bar only for files big enough to watch; for small
         // ones it would just flicker.
         if (path != null && sync.total >= BIG_FILE) {
@@ -124,7 +148,7 @@ private fun SyncBlock(sync: SyncUi) {
             Text(
                 path.substringAfterLast('/') +
                     if (sync.total >= BIG_FILE) " · ${formatBytes(sync.sent)} / ${formatBytes(sync.total)}" else "",
-                style = MetaStyle.copy(fontSize = 12.sp),
+                style = MetaStyle,
                 color = BringTheme.colors.dim,
                 maxLines = 1,
                 overflow = TextOverflow.MiddleEllipsis,

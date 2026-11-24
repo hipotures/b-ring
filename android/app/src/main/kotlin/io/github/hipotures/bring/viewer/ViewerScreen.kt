@@ -140,14 +140,14 @@ private fun Details(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
             }
-            KeyValue("ring path", e.ringPath)
-            KeyValue("local", e.localPath ?: "— (on the Ring only)")
-            KeyValue("size", "${formatBytes(e.size)} (${e.size} B)")
-            KeyValue("modified", formatMtime(e.mtimeNs))
-            KeyValue("type", e.mime ?: extensionOf(name).ifEmpty { "?" })
-            e.blake3?.let { KeyValue("blake3", it.take(16) + "…") }
-            e.lastError?.let { KeyValue("error", it) }
-            if (e.suppressed) KeyValue("note", "Held: removed on the Ring, never uploaded again")
+            KeyValue("On the Ring", e.ringPath)
+            KeyValue("On this device", e.localPath ?: "— (on the Ring only)")
+            KeyValue("Size", "${formatBytes(e.size)} (${e.size} B)")
+            KeyValue("Modified", formatMtime(e.mtimeNs))
+            KeyValue("Type", e.mime ?: extensionOf(name).ifEmpty { "?" })
+            e.blake3?.let { KeyValue("BLAKE3", it.take(16) + "…", code = true) }
+            e.lastError?.let { KeyValue("Error", it) }
+            if (e.suppressed) KeyValue("Note", "Held: removed on the Ring, never uploaded again")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (local != null) {
                     SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })

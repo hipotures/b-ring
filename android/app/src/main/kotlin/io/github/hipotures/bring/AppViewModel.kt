@@ -3,6 +3,7 @@ package io.github.hipotures.bring
 import android.app.Application
 import android.net.ConnectivityManager
 import android.os.SystemClock
+import android.util.Log
 import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
@@ -85,6 +86,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _syncError = MutableStateFlow<String?>(null)
     /** Error of the last round that ended while the app watched, if it failed. */
     val syncError: StateFlow<String?> = _syncError.asStateFlow()
+
+    /** Finished rounds, newest first, and the end of the last check. */
+    val rounds = app.bring.syncLog.rounds
+    val lastChecked = app.bring.syncLog.lastChecked
 
     /** Bumped when a sync round ends, so lists reload. */
     val syncFinished = MutableStateFlow(0)
@@ -170,9 +175,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun probeRoute() {
         viewModelScope.launch(Dispatchers.IO) {
             if (_pairing.value !is Pairing.Paired) return@launch
-            bring.route.value = runCatching {
-                RouteStatus.of(bring.moon.selectRoute(getApplication<Application>().onUnmeteredWifi()))
-            }.getOrDefault(RouteStatus.OFFLINE)
+            val wifi = getApplication<Application>().onUnmeteredWifi()
+            val t0 = SystemClock.elapsedRealtime()
+            val result = runCatching { RouteStatus.of(bring.moon.selectRoute(wifi)) }
+            Log.i(TAG, "route: unmeteredWifi=$wifi -> $result in ${SystemClock.elapsedRealtime() - t0} ms")
+            bring.route.value = result.getOrDefault(RouteStatus.OFFLINE)
         }
     }
 
@@ -286,3 +293,5 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 }
+
+private const val TAG = "bring"

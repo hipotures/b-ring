@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,26 +63,27 @@ fun Panel(
                 Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .heightIn(min = 44.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    title.uppercase(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = BringTheme.colors.dim,
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 trailing()
             }
             HorizontalDivider(thickness = Hairline, color = MaterialTheme.colorScheme.outline)
         }
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             content()
         }
     }
 }
 
-/** Uppercase mono button; `primary` fills it, otherwise it is outlined. */
+/** Square-cornered button, 48dp tall; `primary` fills it, otherwise it is outlined. */
 @Composable
 fun SharpButton(
     text: String,
@@ -91,15 +93,15 @@ fun SharpButton(
     primary: Boolean = false,
     danger: Boolean = false,
 ) {
-    val padding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+    val padding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
     val label: @Composable RowScope.() -> Unit = {
-        Text(text.uppercase(), style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     val accent = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     if (primary) {
         Button(
             onClick,
-            modifier.height(36.dp),
+            modifier.heightIn(min = 48.dp),
             enabled = enabled,
             shape = Sharp,
             contentPadding = padding,
@@ -109,7 +111,7 @@ fun SharpButton(
     } else {
         OutlinedButton(
             onClick,
-            modifier.height(36.dp),
+            modifier.heightIn(min = 48.dp),
             enabled = enabled,
             shape = Sharp,
             contentPadding = padding,
@@ -123,19 +125,19 @@ fun SharpButton(
     }
 }
 
-/** `KEY   value` in a dense mono row. */
+/** `key   value` row; [code] sets the value in monospace (hashes, URLs). */
 @Composable
-fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified) {
+fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified, code: Boolean = false) {
     Row(Modifier.fillMaxWidth()) {
         Text(
-            key.uppercase(),
-            style = MetaStyle,
+            key,
+            style = MaterialTheme.typography.bodyMedium,
             color = BringTheme.colors.dim,
-            modifier = Modifier.widthIn(min = 76.dp).padding(end = 8.dp),
+            modifier = Modifier.widthIn(min = 96.dp).padding(end = 12.dp),
         )
         Text(
             value,
-            style = MetaStyle.copy(fontSize = 12.sp),
+            style = if (code) CodeStyle else MaterialTheme.typography.bodyMedium,
             color = valueColor,
             modifier = Modifier.weight(1f),
         )
@@ -183,6 +185,21 @@ private val RingGlyph: ImageVector by lazy {
     }.build()
 }
 
+/** A square-cornered folder outline (icons-core has no folder icon). */
+val FolderGlyph: ImageVector by lazy {
+    ImageVector.Builder("folder", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
+            moveTo(3f, 5f)
+            lineTo(10f, 5f)
+            lineTo(12f, 7.5f)
+            lineTo(21f, 7.5f)
+            lineTo(21f, 19f)
+            lineTo(3f, 19f)
+            close()
+        }
+    }.build()
+}
+
 /** A filled, square, high-contrast badge with an icon and a label. */
 @Composable
 fun BadgeChip(badge: Badge) {
@@ -198,34 +215,34 @@ fun BadgeChip(badge: Badge) {
     Row(
         Modifier
             .background(fill, Sharp)
-            .padding(horizontal = 4.dp, vertical = 1.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
-            Icon(icon, null, Modifier.size(11.dp), tint = c.onBadge)
-            Spacer(Modifier.width(3.dp))
+            Icon(icon, null, Modifier.size(14.dp), tint = c.onBadge)
+            Spacer(Modifier.width(4.dp))
         }
         Text(
             badge.label,
             color = c.onBadge,
-            style = MetaStyle.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp),
+            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
             maxLines = 1,
         )
     }
 }
 
-/** A large mono status tag, e.g. the route (LAN / WAN / OFFLINE). */
+/** An outlined status tag, e.g. the route (LAN / WAN / OFFLINE). */
 @Composable
 fun Tag(text: String, color: Color) {
     Box(
         Modifier
             .border(Hairline, color, Sharp)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(
             text,
             color = color,
-            style = MetaStyle.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
             maxLines = 1,
             overflow = TextOverflow.Clip,
         )
@@ -237,6 +254,6 @@ fun ErrorLine(text: String) {
     Text(
         text,
         color = MaterialTheme.colorScheme.error,
-        style = MetaStyle.copy(fontSize = 12.sp),
+        style = MaterialTheme.typography.bodyMedium,
     )
 }
