@@ -118,10 +118,13 @@ private fun playbackError(e: PlaybackException): String {
             .joinToString(", ")
     }
     return when (e.errorCode) {
+        // A hardware decoder may accept a format it cannot decode (e.g. 10-bit
+        // H.264) and fail on the first frames: that is DECODING_FAILED.
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
         -> "This phone cannot decode this video" + (what?.let { " ($it)" } ?: "") + "."
         else -> "Cannot play: ${e.errorCodeName}" + (e.cause?.message?.let { " — $it" } ?: "")
     }
