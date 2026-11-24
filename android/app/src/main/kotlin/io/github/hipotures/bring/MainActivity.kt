@@ -142,11 +142,12 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     header = {
                         SetupPanel(storage, folders.size, onOpenSettings = { screen = Screen.SETTINGS })
                     },
+                    uploading = sync.path.takeIf { sync.running },
                 )
             }
             Screen.VIEW -> {
                 TopStrip("", route, sync, onBack = { screen = Screen.HOME })
-                viewing?.let { ViewerScreen(it, route) }
+                viewing?.let { ViewerScreen(it, route, uploading = sync.path.takeIf { sync.running }) }
             }
             Screen.ACTIVITY -> {
                 TopStrip("Sync activity", route, sync, onBack = { screen = Screen.HOME })

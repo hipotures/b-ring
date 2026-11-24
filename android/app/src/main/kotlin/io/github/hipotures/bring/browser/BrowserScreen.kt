@@ -75,6 +75,8 @@ fun BrowserScreen(
     onDir: (String) -> Unit,
     onOpen: (Entry) -> Unit,
     header: @Composable () -> Unit,
+    /** Ring path of the file being uploaded right now, if any. */
+    uploading: String? = null,
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
@@ -125,7 +127,7 @@ fun BrowserScreen(
         }) { row ->
             when (row) {
                 is DirRow.Folder -> FolderRow(row) { onDir(row.path) }
-                is DirRow.File -> FileRow(row.item, row.name) { onOpen(row.item) }
+                is DirRow.File -> FileRow(row.item, row.name, row.item.ringPath == uploading) { onOpen(row.item) }
             }
             RowDivider()
         }
@@ -205,7 +207,7 @@ private fun FolderRow(row: DirRow.Folder, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FileRow(entry: Entry, name: String, onClick: () -> Unit) {
+private fun FileRow(entry: Entry, name: String, uploading: Boolean, onClick: () -> Unit) {
     RecordRow(onClick, leading = { Thumb(entry, name) }) {
         Name(name)
         Text(
@@ -219,7 +221,7 @@ private fun FileRow(entry: Entry, name: String, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space1),
             verticalArrangement = Arrangement.spacedBy(TmDimens.space0_5),
         ) {
-            badgesFor(entry.state, entry.uploadPending, entry.lastError, entry.suppressed).forEach { BadgeChip(it) }
+            badgesFor(entry.state, entry.uploadPending, entry.lastError, entry.suppressed, uploading).forEach { BadgeChip(it) }
         }
     }
 }

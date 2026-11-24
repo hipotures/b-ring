@@ -76,7 +76,7 @@ import java.io.File
 
 /** One file: media fills the screen, a compact info bar below. */
 @Composable
-fun ViewerScreen(entryId: Long, route: RouteStatus) {
+fun ViewerScreen(entryId: Long, route: RouteStatus, uploading: String? = null) {
     val context = LocalContext.current
     var entry by remember { mutableStateOf<Entry?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -111,7 +111,7 @@ fun ViewerScreen(entryId: Long, route: RouteStatus) {
                 Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) { MediaPlayer(e, local) }
             else -> {}
         }
-        InfoBar(e, name, kind, local, route, media, details, { details = it }, if (media) Modifier else Modifier.weight(1f))
+        InfoBar(e, name, kind, local, route, media, details, { details = it }, e.ringPath == uploading, if (media) Modifier else Modifier.weight(1f))
     }
 }
 
@@ -167,6 +167,7 @@ private fun InfoBar(
     media: Boolean,
     open: Boolean,
     onOpen: (Boolean) -> Unit,
+    uploading: Boolean,
     modifier: Modifier,
 ) {
     val c = Tm.colors
@@ -192,7 +193,7 @@ private fun InfoBar(
                 modifier = Modifier.weight(1f),
             )
             if (local != null) SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })
-            badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
+            badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed, uploading).forEach { BadgeChip(it) }
         }
         Row(
             Modifier

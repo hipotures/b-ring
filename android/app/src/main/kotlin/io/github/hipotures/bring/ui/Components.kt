@@ -265,15 +265,22 @@ enum class Badge(val label: String, val tone: TmTone) {
     SYNCED("Synced", TmTone.Success),
     REMOTE("Remote", TmTone.Info),
     UPLOAD("Queued", TmTone.Pending),
+    SENDING("Uploading", TmTone.Accent),
     ERROR("Failed", TmTone.Danger),
     HELD("Held", TmTone.Warning),
 }
 
 /**
- * The state badge first, then flags: queued for upload, last upload failed,
- * or held back (`suppressed`: never uploaded again, §5.1).
+ * The state badge first, then flags: queued for upload (or uploading right
+ * now), last upload failed, or held back (`suppressed`: never uploaded again, §5.1).
  */
-fun badgesFor(state: EntryState, pending: Boolean, error: String?, suppressed: Boolean): List<Badge> =
+fun badgesFor(
+    state: EntryState,
+    pending: Boolean,
+    error: String?,
+    suppressed: Boolean,
+    uploading: Boolean = false,
+): List<Badge> =
     buildList {
         add(
             when (state) {
@@ -282,7 +289,7 @@ fun badgesFor(state: EntryState, pending: Boolean, error: String?, suppressed: B
                 EntryState.REMOTE_ONLY -> Badge.REMOTE
             },
         )
-        if (pending) add(Badge.UPLOAD)
+        if (pending) add(if (uploading) Badge.SENDING else Badge.UPLOAD)
         if (error != null) add(Badge.ERROR)
         if (suppressed) add(Badge.HELD)
     }
