@@ -1,14 +1,14 @@
 //! `bring` — companion CLI for `bringd` (talks over the control socket).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use bring_core::ctl::{self, CtlEvent, CtlRequest, DeviceInfo};
 use clap::{Parser, Subcommand};
-use qrcode::QrCode;
 use qrcode::render::unicode::Dense1x2;
+use qrcode::{Color, QrCode};
 
 #[derive(Parser)]
 #[command(name = "bring", version, about = "Control the B-Ring daemon")]
@@ -145,6 +145,39 @@ fn ask_yes_no(prompt: &str) -> bool {
     )
 }
 
+/// Modules of light margin around the code (the QR spec asks for 4).
+const QUIET_ZONE: usize = 4;
+
+/// Draws the code black on white with explicit ANSI colours, two modules per
+/// character cell (`▀`: foreground = upper module, background = lower).
+///
+/// Plain block characters take the terminal's own colours: on a dark theme
+/// they come out inverted, with no light quiet zone, and many scanners
+/// (ZXing among them) do not find such a code.
+fn qr_ansi(qr: &QrCode) -> String {
+    let width = qr.width();
+    let colors = qr.to_colors();
+    let size = width + 2 * QUIET_ZONE;
+    let dark = |x: usize, y: usize| {
+        x >= QUIET_ZONE
+            && y >= QUIET_ZONE
+            && x < QUIET_ZONE + width
+            && y < QUIET_ZONE + width
+            && colors[(y - QUIET_ZONE) * width + (x - QUIET_ZONE)] == Color::Dark
+    };
+    let mut out = String::new();
+    for y in (0..size).step_by(2) {
+        for x in 0..size {
+            let fg = if dark(x, y) { 30 } else { 97 };
+            let bg = if dark(x, y + 1) { 40 } else { 107 };
+            out.push_str(&format!("\x1b[{fg};{bg}m▀"));
+        }
+        out.push_str("\x1b[0m\n");
+    }
+    out.pop();
+    out
+}
+
 fn pair(conn: &mut Conn) -> Result<(), String> {
     conn.send(&CtlRequest::Pair)?;
     match conn.recv()? {
@@ -154,7 +187,11 @@ fn pair(conn: &mut Conn) -> Result<(), String> {
             expires_in_secs,
         } => {
             let qr = QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
-            println!("{}", qr.render::<Dense1x2>().quiet_zone(true).build());
+            if std::io::stdout().is_terminal() {
+                println!("{}", qr_ansi(&qr));
+            } else {
+                println!("{}", qr.render::<Dense1x2>().quiet_zone(true).build());
+            }
             println!("Scan this with the B-Ring app, or type the code:\n");
             println!("    {text}\n");
             let expires = match expires_in_secs {
@@ -248,5 +285,29 @@ fn main() -> ExitCode {
             eprintln!("bring: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qr_is_black_on_white_with_a_light_quiet_zone() {
+        let qr = QrCode::new(b"040G4-0R40M-30E25").unwrap();
+        let size = qr.width() + 2 * QUIET_ZONE;
+        let out = qr_ansi(&qr);
+        let rows: Vec<Vec<&str>> = out
+            .lines()
+            .map(|l| l.split('▀').filter(|c| c.contains(";")).collect())
+            .collect();
+        assert_eq!(rows.len(), size.div_ceil(2));
+        assert!(rows.iter().all(|r| r.len() == size));
+        // Quiet zone: the first two module rows and the left margin are white.
+        assert!(rows[0].iter().all(|c| c.ends_with("[97;107m")));
+        assert!(rows.iter().all(|r| r[0].ends_with("[97;107m")));
+        // Top-left finder pattern starts dark at module (4, 4): row pair 2.
+        assert!(rows[2][QUIET_ZONE].ends_with("[30;40m"));
+        assert!(out.lines().all(|l| l.ends_with("\x1b[0m")));
     }
 }
