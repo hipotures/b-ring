@@ -14,7 +14,20 @@ name = "bring_uniffi"
 
 [dependencies]
 bring-core.workspace = true
+getrandom.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 uniffi.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 # Not inheriting workspace lints: the UniFFI macros generate `unsafe` FFI code,
 # which the workspace-wide `unsafe_code = "forbid"` would reject.

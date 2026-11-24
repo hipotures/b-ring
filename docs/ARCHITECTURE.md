@@ -56,10 +56,12 @@ b-ring/
 │   │   └── ctl_server.rs         # $XDG_RUNTIME_DIR/bring/bringd.sock
 │   ├── bring-cli/src/main.rs     # binary `bring`: status | pair | devices | revoke
 │   └── bring-uniffi/src/
-│       ├── lib.rs                # #[uniffi::export], proc-macro mode
-│       ├── client.rs             # reqwest + rustls with fingerprint-pinning verifier
-│       ├── sync.rs               # delta sync, outbox, upload/resume, offload
-│       └── pairing.rs            # pairing state machine wrapper for Kotlin
+│       ├── lib.rs                # #[uniffi::export] `Moon` object, records, proc-macro mode
+│       ├── client.rs             # reqwest + rustls: pinning / recording / WebPKI verifiers
+│       ├── sync.rs               # delta sync, local scan, hash-first outbox, upload/resume, offload
+│       ├── store.rs              # Moon SQLite access
+│       ├── error.rs              # MoonError (the one error Kotlin sees)
+│       └── pairing.rs            # pair_start / pair_finish
 ├── android/                      # Gradle, app/ (Compose), cargo-ndk -> jniLibs
 ├── dist/systemd/bringd.service
 └── docs/
@@ -445,6 +447,41 @@ connection cancels the session.
   usable camera (for example Meta Quest 3).
 - **Storage access:** `MANAGE_EXTERNAL_STORAGE` (private sideloaded APK).
 
+### 4.1 Moon sync engine (`bring-uniffi`)
+
+- **Blocking API.** One exported `Moon` object; Kotlin calls it from
+  `Dispatchers.IO` / a `Worker`. A private Tokio runtime drives `reqwest`.
+  `cancel()` stops a running sync at the next file or chunk boundary;
+  `TransferListener` (a foreign trait) reports upload progress.
+- **Token.** `pair_finish` returns the device token; Kotlin keeps it in the
+  Keystore and passes it back with `set_device_token` after every start. It is
+  never written to SQLite.
+- **`run_sync`** = index → local scan → outbox → index. Sync operations are
+  serialized; browsing (`entries`) only takes the DB lock.
+- **Local scan** walks enabled watched folders (skipping dot-files such as
+  Android's `.pending-*` / `.trashed-*`, and symlinks). A watched folder that
+  is missing or unreadable (unmounted SD card) is skipped *and* its files are
+  not treated as deleted.
+- **Outbox:** hash every pending file first (§3.5 step 0), then upload
+  smallest-first, resuming via `GET /uploads/{id}`. A network error stops the
+  round (the rest would fail the same way); other errors back off
+  exponentially (30 s … 1 h).
+- **Retention order:** the DB is updated to `remote-only` *before* the local
+  file is deleted, and the file is re-`stat`ed right before the delete. A crash
+  in between leaves a file the next scan re-uploads, which dedupes to the same
+  ACK.
+- **Path clashes.** `entries.ring_path` is unique, so:
+  - `enqueue_upload` (Share Sheet) picks the first free name with the Ring's
+    own rule (`bring-core::transfer::conflict_candidates`).
+  - A pending upload keeps its path; an index entry for a *different* Ring file
+    at that path is skipped. When the ACK names a conflict path, the entry moves
+    there and the Moon rewinds its cursor to 0 (an idempotent re-read) so the
+    skipped file appears.
+  - The desktop replacing a `synced` file's content is handled like a Ring-side
+    delete of our version (§5.1): the local copy stays, `local-only`,
+    `suppressed`. The new desktop version is not listed while that row holds
+    the path (Phase 1 limitation).
+
 ---
 
 ## 5. Sync semantics (decisions)
@@ -538,11 +575,14 @@ Each step has a gate: its tests must pass before the next step starts.
     `arm64-v8a`; there is no `x86_64` build and no emulator.
     - **10a — library.** Pinning verifier and pairing client (§3.1); delta
       sync; hash-then-upload (§3.5, step 0); outbox with backoff; offload;
-      proc-macro exports.
+      proc-macro exports (§4.1).
 
       *Gate:* a "fake Moon" in Rust (the same code Android runs) completes the
       full cycle against a real `bringd`: pair → upload 150 MiB → ACK →
-      `remote-only` → stream.
+      `remote-only` → stream. It lives in `crates/bringd/tests/fake_moon.rs`
+      (Cargo only exposes the `bringd` binary to that package's tests) and
+      also covers an interrupted-and-resumed upload, a Ring-side name clash,
+      a desktop delete, and pin enforcement.
     - **10b — Android build.** Minimal Android command-line tools, one platform
       API, one NDK; `cargo-ndk -t arm64-v8a` builds the `.so`; `uniffi-bindgen`
       generates the Kotlin bindings.

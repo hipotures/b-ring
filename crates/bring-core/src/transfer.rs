@@ -71,6 +71,27 @@ pub fn client_key(path: &RelPath, size: u64, blake3: &Blake3Hash) -> Blake3Hash 
     h.finalize().into()
 }
 
+/// How many conflict names are tried before giving up.
+pub const MAX_CONFLICT_NAMES: u32 = 1000;
+
+/// Names tried for an upload, in order (never overwriting, §3.5): `a.jpg`, `a (slug).jpg`, `a (slug 2).jpg`, ...
+pub fn conflict_candidates(path: &RelPath, slug: &str) -> impl Iterator<Item = RelPath> {
+    let name = path.file_name().to_owned();
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (name[..i].to_owned(), name[i..].to_owned()),
+        _ => (name.clone(), String::new()),
+    };
+    let path = path.clone();
+    let slug = slug.to_owned();
+    (1..=MAX_CONFLICT_NAMES).filter_map(move |n| match n {
+        1 => Some(path.clone()),
+        2 => path.with_file_name(&format!("{stem} ({slug}){ext}")).ok(),
+        n => path
+            .with_file_name(&format!("{stem} ({slug} {}){ext}", n - 1))
+            .ok(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +140,37 @@ mod tests {
         assert_ne!(k, client_key(&RelPath::new("DCIM/b.jpg").unwrap(), 10, &h));
         assert_ne!(k, client_key(&p, 11, &h));
         assert_ne!(k, client_key(&p, 10, &Blake3Hash([2; 32])));
+    }
+
+    #[test]
+    fn conflict_candidates_never_reuse_the_name() {
+        let p = RelPath::new("DCIM/IMG_0042.jpg").unwrap();
+        let c: Vec<String> = conflict_candidates(&p, "pixel-8")
+            .take(4)
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(
+            c,
+            [
+                "DCIM/IMG_0042.jpg",
+                "DCIM/IMG_0042 (pixel-8).jpg",
+                "DCIM/IMG_0042 (pixel-8 2).jpg",
+                "DCIM/IMG_0042 (pixel-8 3).jpg"
+            ]
+        );
+        let dot = RelPath::new(".profile").unwrap();
+        assert_eq!(
+            conflict_candidates(&dot, "q").nth(1).unwrap().as_str(),
+            ".profile (q)"
+        );
+        let noext = RelPath::new("README").unwrap();
+        assert_eq!(
+            conflict_candidates(&noext, "q").nth(1).unwrap().as_str(),
+            "README (q)"
+        );
+        assert_eq!(
+            conflict_candidates(&p, "x").count(),
+            MAX_CONFLICT_NAMES as usize
+        );
     }
 }

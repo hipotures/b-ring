@@ -42,8 +42,6 @@ use crate::store::{self, Db, DiskStat, FileRow};
 
 /// Uploads untouched for this long are discarded.
 pub const ABANDON_AFTER: Duration = Duration::from_secs(7 * 24 * 3600);
-/// How many conflict names to try before giving up.
-const MAX_CONFLICT_NAMES: u32 = 1000;
 
 /// Everything upload handling needs.
 #[derive(Clone)]
@@ -425,24 +423,6 @@ pub fn put_chunk(
 // Commit
 // ---------------------------------------------------------------------------
 
-/// Candidate names: `a.jpg`, `a (slug).jpg`, `a (slug 2).jpg`, ...
-fn candidates(path: &RelPath, slug: &str) -> impl Iterator<Item = RelPath> {
-    let name = path.file_name().to_owned();
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (name[..i].to_owned(), name[i..].to_owned()),
-        _ => (name.clone(), String::new()),
-    };
-    let path = path.clone();
-    let slug = slug.to_owned();
-    (1..=MAX_CONFLICT_NAMES).filter_map(move |n| match n {
-        1 => Some(path.clone()),
-        2 => path.with_file_name(&format!("{stem} ({slug}){ext}")).ok(),
-        n => path
-            .with_file_name(&format!("{stem} ({slug} {}){ext}", n - 1))
-            .ok(),
-    })
-}
-
 fn fsync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
@@ -463,7 +443,7 @@ fn place(
     dev: &AuthDevice,
 ) -> Result<Placed, ApiError> {
     let staging = up.staging_path(&u.id);
-    for cand in candidates(&u.target_path, &dev.slug) {
+    for cand in transfer::conflict_candidates(&u.target_path, &dev.slug) {
         let fs = cand.to_fs_path(&up.root);
         match std::fs::symlink_metadata(&fs) {
             Ok(meta) => {
@@ -737,34 +717,5 @@ mod tests {
         assert!(!valid_upload_id("../../etc/passwd"));
         assert!(!valid_upload_id(&id.to_uppercase()));
         assert!(!valid_upload_id(&id[..35]));
-    }
-
-    #[test]
-    fn conflict_candidates() {
-        let p = RelPath::new("DCIM/IMG_0042.jpg").unwrap();
-        let c: Vec<String> = candidates(&p, "pixel-8")
-            .take(4)
-            .map(|p| p.to_string())
-            .collect();
-        assert_eq!(
-            c,
-            [
-                "DCIM/IMG_0042.jpg",
-                "DCIM/IMG_0042 (pixel-8).jpg",
-                "DCIM/IMG_0042 (pixel-8 2).jpg",
-                "DCIM/IMG_0042 (pixel-8 3).jpg"
-            ]
-        );
-        let dot = RelPath::new(".profile").unwrap();
-        assert_eq!(
-            candidates(&dot, "q").nth(1).unwrap().as_str(),
-            ".profile (q)"
-        );
-        let noext = RelPath::new("README").unwrap();
-        assert_eq!(
-            candidates(&noext, "q").nth(1).unwrap().as_str(),
-            "README (q)"
-        );
-        assert_eq!(candidates(&p, "x").count(), MAX_CONFLICT_NAMES as usize);
     }
 }
