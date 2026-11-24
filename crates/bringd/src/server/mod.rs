@@ -1,19 +1,26 @@
 //! HTTP API (`/api/v1`).
 
+pub mod auth;
 mod health;
 mod index;
 mod thumbs;
+mod uploads;
 
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use bring_core::api::{ErrorBody, ErrorCode};
+use bring_core::transfer::MAX_CHUNK_SIZE;
 use tracing::error;
 
+use crate::hasher::HashQueue;
 use crate::store::Db;
 use crate::thumbs::ThumbStore;
+use crate::uploads::Uploads;
 
 /// State shared by all handlers.
 #[derive(Clone)]
@@ -22,15 +29,31 @@ pub struct AppState {
     /// Hex-encoded Ring identity.
     pub ring_id: String,
     pub thumbs: ThumbStore,
+    pub uploads: Uploads,
+    pub hashq: HashQueue,
 }
 
 /// Builds the API router.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/v1/health", get(health::health))
+    let public = Router::new().route("/api/v1/health", get(health::health));
+    let device = Router::new()
         .route("/api/v1/index", get(index::index))
         .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))
-        .with_state(state)
+        .route("/api/v1/uploads", post(uploads::create))
+        .route(
+            "/api/v1/uploads/{id}",
+            get(uploads::status).delete(uploads::abort),
+        )
+        .route(
+            "/api/v1/uploads/{id}/chunks/{index}",
+            post(uploads::put_chunk).layer(DefaultBodyLimit::max(MAX_CHUNK_SIZE as usize)),
+        )
+        .route("/api/v1/uploads/{id}/commit", post(uploads::commit))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_device,
+        ));
+    public.merge(device).with_state(state)
 }
 
 /// An error rendered as `{"error": code, "message": ...}`.

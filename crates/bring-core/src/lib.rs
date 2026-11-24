@@ -10,6 +10,7 @@ pub mod hash;
 pub mod model;
 pub mod offload;
 pub mod pairing;
+pub mod transfer;
 
 pub use model::{Blake3Hash, FileState, RelPath, RelPathError};
 

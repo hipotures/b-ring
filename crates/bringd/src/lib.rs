@@ -4,12 +4,14 @@
 //! integration tests can drive the real services.
 
 pub mod config;
+pub mod devices;
 pub mod hasher;
 pub mod ring;
 pub mod scanner;
 pub mod server;
 pub mod store;
 pub mod thumbs;
+pub mod uploads;
 pub mod watcher;
 
 pub use config::Config;

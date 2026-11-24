@@ -12,6 +12,7 @@ use crate::scanner::{self, RESERVED_DIR};
 use crate::server::{self, AppState};
 use crate::store::{self, Db};
 use crate::thumbs::ThumbStore;
+use crate::uploads::{self, Uploads};
 use crate::watcher::{self, WatcherHandle};
 
 #[derive(Debug, thiserror::Error)]
@@ -34,6 +35,7 @@ pub struct Ring {
     pub hashq: HashQueue,
     pub ring_id: String,
     pub thumbs: ThumbStore,
+    pub uploads: Uploads,
     _watcher: WatcherHandle,
 }
 
@@ -54,13 +56,19 @@ impl Ring {
             path: root.clone(),
             source,
         })?;
-        mkdir(root.join(RESERVED_DIR).join("staging"))?;
+        let staging = mkdir(root.join(RESERVED_DIR).join("staging"))?;
         for folder in &config.folders {
             mkdir(root.join(folder))?;
         }
 
         let db = Db::open(&config.db_path())?;
         let ring_id = store::ring_id_hex(&db.lock())?;
+        let uploads = Uploads::new(root.clone(), staging, db.clone());
+        let recovered = uploads::recover(&uploads)?;
+        if recovered > 0 {
+            info!(recovered, "reopened uploads interrupted during commit");
+        }
+        spawn_cleanup(uploads.clone());
         let thumbs_dir = config.thumbs_dir();
         let thumbs =
             ThumbStore::new(thumbs_dir.clone(), config.ffmpeg.clone()).map_err(|source| {
@@ -87,6 +95,7 @@ impl Ring {
             hashq,
             ring_id,
             thumbs,
+            uploads,
             _watcher: watcher,
         })
     }
@@ -96,6 +105,26 @@ impl Ring {
             db: self.db.clone(),
             ring_id: self.ring_id.clone(),
             thumbs: self.thumbs.clone(),
+            uploads: self.uploads.clone(),
+            hashq: self.hashq.clone(),
         })
     }
+}
+
+/// Hourly removal of abandoned uploads (first run at start).
+fn spawn_cleanup(uploads: Uploads) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            tick.tick().await;
+            let up = uploads.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                uploads::cleanup(&up, crate::devices::now_secs(), uploads::ABANDON_AFTER)
+            })
+            .await;
+            if let Ok(Err(e)) = res {
+                tracing::warn!(error = %e, "upload cleanup failed");
+            }
+        }
+    });
 }

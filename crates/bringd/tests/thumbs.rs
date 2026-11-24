@@ -11,7 +11,7 @@ use axum::http::{Request, StatusCode, header};
 use bring_core::RelPath;
 use bring_core::hash::hash_bytes;
 use bringd::store;
-use common::{send, start_with, wait_for};
+use common::{start_with, wait_for};
 
 fn png(w: u32, h: u32) -> Vec<u8> {
     let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 99]));
@@ -68,14 +68,12 @@ async fn images_get_thumbnails_served_immutably() {
     assert_eq!(notes.thumb, None);
 
     let thumb = row.thumb.unwrap();
-    let router = t.ring.router();
-    let (status, headers, body) = send(
-        &router,
-        Request::get(format!("/api/v1/thumbs/{thumb}"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
+    let (status, headers, body) = t
+        .call(
+            Request::get(format!("/api/v1/thumbs/{thumb}")),
+            Body::empty(),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], "image/jpeg");
     assert!(
@@ -88,20 +86,18 @@ async fn images_get_thumbnails_served_immutably() {
     let decoded = image::load_from_memory(&body).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (320, 240));
 
-    let (status, _, _) = send(
-        &router,
-        Request::get(format!("/api/v1/thumbs/{}", "0".repeat(64)))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
+    let (status, _, _) = t
+        .call(
+            Request::get(format!("/api/v1/thumbs/{}", "0".repeat(64))),
+            Body::empty(),
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _, _) = send(
-        &router,
-        Request::get("/api/v1/thumbs/..%2F..%2Fetc%2Fpasswd")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
+    let (status, _, _) = t
+        .call(
+            Request::get("/api/v1/thumbs/..%2F..%2Fetc%2Fpasswd"),
+            Body::empty(),
+        )
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

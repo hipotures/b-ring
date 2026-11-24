@@ -86,8 +86,7 @@ async fn watcher_tracks_create_modify_rename_delete() {
 
     // The delta stream: strictly increasing seq, one entry per row (latest
     // state), tombstones included, and paging that resumes where it stopped.
-    let router = ring.router();
-    let (status, all): (_, IndexResponse) = get_json(&router, "/api/v1/index").await;
+    let (status, all): (_, IndexResponse) = t.get_json("/api/v1/index").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!all.has_more);
     assert!(all.entries.windows(2).all(|w| w[0].seq < w[1].seq));
@@ -102,18 +101,17 @@ async fn watcher_tracks_create_modify_rename_delete() {
     );
     assert_eq!(all.next_since, all.entries.last().unwrap().seq);
 
-    let (_, first): (_, IndexResponse) = get_json(&router, "/api/v1/index?limit=1").await;
+    let (_, first): (_, IndexResponse) = t.get_json("/api/v1/index?limit=1").await;
     assert_eq!(first.entries.len(), 1);
     assert!(first.has_more);
-    let (_, rest): (_, IndexResponse) = get_json(
-        &router,
-        &format!("/api/v1/index?since={}", first.next_since),
-    )
-    .await;
+    let (_, rest): (_, IndexResponse) = t
+        .get_json(&format!("/api/v1/index?since={}", first.next_since))
+        .await;
     assert_eq!(rest.entries.len(), all.entries.len() - 1);
 
-    let (_, empty): (_, IndexResponse) =
-        get_json(&router, &format!("/api/v1/index?since={}", all.next_since)).await;
+    let (_, empty): (_, IndexResponse) = t
+        .get_json(&format!("/api/v1/index?since={}", all.next_since))
+        .await;
     assert!(empty.entries.is_empty());
     assert_eq!(empty.next_since, all.next_since);
 }
@@ -160,7 +158,7 @@ async fn health_reports_ring_id() {
 async fn index_rejects_negative_since() {
     let t = start().await;
     let (status, body): (_, bring_core::api::ErrorBody) =
-        get_json(&t.ring.router(), "/api/v1/index?since=-1").await;
+        t.get_json("/api/v1/index?since=-1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body.error, bring_core::api::ErrorCode::BadRequest);
 }
