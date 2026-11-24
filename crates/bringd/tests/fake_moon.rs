@@ -356,6 +356,7 @@ fn fake_moon_full_cycle() {
         .enqueue_upload(share.to_str().unwrap().into(), "Inbox/late.txt".into())
         .unwrap();
     assert_eq!(queued.ring_path, "Inbox/late.txt");
+    std::fs::create_dir_all(d.join("ring/Inbox")).unwrap();
     std::fs::write(d.join("ring/Inbox/late.txt"), b"from the desktop").unwrap();
     wait_until("Ring indexes the desktop file", || {
         ring_seq(d, "Inbox/late.txt", false).is_some()

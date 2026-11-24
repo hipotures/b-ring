@@ -48,7 +48,7 @@ impl Default for Config {
             ctl_socket: None,
             pairing_ttl_secs: 300,
             notifications: false,
-            folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
+            folders: Vec::new(),
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),
         }
@@ -151,7 +151,8 @@ mod tests {
     fn empty_config_is_default() {
         let c = Config::parse("").unwrap();
         assert!(c.ring_root.ends_with("B-Ring"));
-        assert_eq!(c.folders, ["DCIM", "Download", "Inbox"]);
+        assert!(c.folders.is_empty());
+        assert!(!c.notifications);
     }
 
     #[test]

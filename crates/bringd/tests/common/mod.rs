@@ -41,6 +41,7 @@ pub fn test_config(dir: &std::path::Path) -> Config {
         debounce_ms: 100,
         // Never pop up desktop notifications from automated tests.
         notifications: false,
+        folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
         ..Config::default()
     }
 }
