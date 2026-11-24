@@ -8,6 +8,8 @@ mod pair;
 mod thumbs;
 mod uploads;
 
+use std::path::PathBuf;
+
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -29,6 +31,7 @@ use crate::uploads::Uploads;
 /// State shared by all handlers.
 #[derive(Clone)]
 pub struct AppState {
+    pub root: PathBuf,
     pub db: Db,
     /// Hex-encoded Ring identity.
     pub ring_id: String,
@@ -53,6 +56,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pair/{id}/result", get(pair::result));
     let device = Router::new()
         .route("/api/v1/index", get(index::index))
+        .route("/api/v1/rescan", post(index::rescan))
         .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))
         .route("/api/v1/files/{id}/stream-url", post(files::stream_url))
         .route("/api/v1/uploads", post(uploads::create))

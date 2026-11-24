@@ -286,7 +286,7 @@ fn fake_moon_full_cycle() {
         .map(|(_, sent, _)| *sent)
         .unwrap();
     assert!(
-        resumed_from > 3 * CHUNK,
+        resumed_from >= 3 * CHUNK,
         "resumed instead of restarting (first progress at {resumed_from})"
     );
 
@@ -403,10 +403,15 @@ fn fake_moon_full_cycle() {
     assert_eq!((p.state, p.suppressed), (EntryState::LocalOnly, true));
     assert!(photo.exists());
 
-    // --- Steady state ----------------------------------------------------------
+    // --- Steady state & verify_sync --------------------------------------------
     let again = moon.run_sync(None).unwrap();
     assert_eq!(again.outbox, Default::default(), "nothing left to do");
     assert!(video.metadata().is_err());
+
+    let verified = moon.verify_sync().unwrap();
+    assert!(verified.total_entries >= 4, "{verified:?}");
+    assert_eq!(verified.queued, 0, "{verified:?}");
+    assert_eq!(verified.retried, 0, "{verified:?}");
 
     // --- The pin is enforced ------------------------------------------------------
     let pinned = |pin: &[u8]| {

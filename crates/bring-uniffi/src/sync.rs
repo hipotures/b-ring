@@ -19,7 +19,7 @@ use std::sync::atomic::Ordering;
 
 use bring_core::api::{
     CHUNK_HASH_HEADER, CreateUploadRequest, CreateUploadResponse, INDEX_MAX_LIMIT, IndexEntry,
-    IndexResponse, UploadAck, UploadState, UploadStatus,
+    IndexResponse, RescanResponse, UploadAck, UploadState, UploadStatus,
 };
 use bring_core::hash::{hash_bytes, hash_file};
 use bring_core::offload::{self, Decision, HashSnapshot, LocalStat, VerifiedAck};
@@ -86,6 +86,58 @@ pub struct SyncReport {
     pub index: IndexReport,
     pub scan: ScanReport,
     pub outbox: OutboxReport,
+}
+
+/// Result of [`Moon::verify_sync`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct VerifyReport {
+    pub total_entries: u32,
+    /// Entries that gained a thumbnail during this check.
+    pub thumbs_updated: u32,
+    /// Thumbable entries on the Ring that still have no thumbnail.
+    pub missing_thumbs: u32,
+    /// Files the Ring queued for hashing or thumbnailing during its rescan.
+    pub ring_queued: u32,
+    pub scan: ScanReport,
+    /// Entries waiting to be uploaded.
+    pub queued: u32,
+    /// Backed-off outbox rows cleared to retry immediately.
+    pub retried: u32,
+}
+
+pub(crate) fn looks_thumbable(mime: Option<&str>, ring_path: &str) -> bool {
+    if let Some(m) = mime {
+        if m == "image/svg+xml" {
+            return false;
+        }
+        if m.starts_with("image/") || m.starts_with("video/") {
+            return true;
+        }
+    }
+    let ext = ring_path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase());
+    matches!(
+        ext.as_deref(),
+        Some(
+            "jpg"
+                | "jpeg"
+                | "png"
+                | "webp"
+                | "gif"
+                | "bmp"
+                | "heic"
+                | "heif"
+                | "avif"
+                | "mp4"
+                | "m4v"
+                | "mov"
+                | "mkv"
+                | "webm"
+                | "3gp"
+                | "avi"
+        )
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -545,12 +597,24 @@ impl Moon {
         s: &Session,
         listener: Option<&Arc<dyn TransferListener>>,
     ) -> Result<OutboxReport, MoonError> {
+        let (report, _) = self.process_outbox_tracked(s, listener).await?;
+        Ok(report)
+    }
+
+    pub(crate) async fn process_outbox_tracked(
+        &self,
+        s: &Session,
+        listener: Option<&Arc<dyn TransferListener>>,
+    ) -> Result<(OutboxReport, Vec<i64>), MoonError> {
         self.prepare_outbox()?;
+        let jobs = self.due_jobs(now_secs())?;
         let mut report = OutboxReport::default();
-        for job in self.due_jobs(now_secs())? {
+        let mut uploaded_ids = Vec::new();
+        for (idx, job) in jobs.iter().enumerate() {
             self.check_cancel()?;
-            match self.run_job(s, &job, listener).await {
+            match self.run_job(s, job, listener).await {
                 Ok(JobOutcome { sent, decision }) => {
+                    uploaded_ids.push(job.entry.id);
                     match sent {
                         true => report.uploaded += 1,
                         false => report.deduplicated += 1,
@@ -559,6 +623,11 @@ impl Moon {
                         Decision::Offload => report.offloaded += 1,
                         Decision::KeepSynced => report.kept += 1,
                         _ => {}
+                    }
+                    // Pick up thumbnails for already-committed files during a
+                    // multi-file batch instead of waiting for the last gigabyte.
+                    if idx + 1 < jobs.len() {
+                        let _ = self.sync_index_inner(s).await;
                     }
                 }
                 Err(MoonError::Cancelled) => return Err(MoonError::Cancelled),
@@ -575,7 +644,148 @@ impl Moon {
         report.remaining = self
             .db()
             .query_row("SELECT COUNT(*) FROM outbox", [], |r| r.get(0))?;
-        Ok(report)
+        Ok((report, uploaded_ids))
+    }
+
+    async fn sleep_cancellable(&self, total: std::time::Duration) -> bool {
+        let step = std::time::Duration::from_millis(150);
+        let mut slept = std::time::Duration::ZERO;
+        while slept < total {
+            if self.cancel.load(Ordering::Relaxed) {
+                return false;
+            }
+            let d = (total - slept).min(step);
+            tokio::time::sleep(d).await;
+            slept += d;
+        }
+        !self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn count_missing_thumbs(&self, ids: Option<&[i64]>) -> Result<u32, MoonError> {
+        let db = self.db();
+        let mut missing = 0u32;
+        match ids {
+            Some(ids) => {
+                for &id in ids {
+                    if let Some(e) = store::entry_by_id(&db, id)?
+                        && e.state != FileState::LocalOnly
+                        && e.thumb.is_none()
+                        && looks_thumbable(e.mime.as_deref(), &e.ring_path)
+                    {
+                        missing += 1;
+                    }
+                }
+            }
+            None => {
+                let mut stmt = db.prepare(
+                    "SELECT mime, ring_path FROM entries
+                     WHERE state != 'local-only' AND thumb_blake3 IS NULL",
+                )?;
+                let rows = stmt.query_map([], |r| {
+                    Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (mime, path) = row?;
+                    if looks_thumbable(mime.as_deref(), &path) {
+                        missing += 1;
+                    }
+                }
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Briefly waits for the Ring's async thumbnailer after uploading media so
+    /// the last uploaded file does not stay a blank placeholder until the next
+    /// 15-minute round.
+    pub(crate) async fn wait_for_thumbs(
+        &self,
+        s: &Session,
+        uploaded_ids: &[i64],
+        index: &mut IndexReport,
+    ) {
+        if uploaded_ids.is_empty() {
+            return;
+        }
+        for _ in 0..2 {
+            if self.count_missing_thumbs(Some(uploaded_ids)).unwrap_or(0) == 0 {
+                return;
+            }
+            if !self
+                .sleep_cancellable(std::time::Duration::from_millis(1500))
+                .await
+            {
+                return;
+            }
+            match self.sync_index_inner(s).await {
+                Ok(more) => {
+                    index.received += more.received;
+                    index.cursor = more.cursor;
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// Full consistency check: ask the Ring to rescan for missing hashes or
+    /// thumbnails, rewind the cursor to 0 and re-read the whole index, rescan
+    /// watched folders, and clear retry backoff for queued uploads.
+    pub(crate) async fn verify_sync_inner(&self, s: &Session) -> Result<VerifyReport, MoonError> {
+        let ring_queued = match s.json::<RescanResponse>(s.post("/rescan")).await {
+            Ok(r) => r.queued,
+            Err(e) if matches!(e.status(), Some(404 | 405)) => 0,
+            Err(e) => return Err(e),
+        };
+        if ring_queued > 0 {
+            let _ = self
+                .sleep_cancellable(std::time::Duration::from_millis(1500))
+                .await;
+        }
+        let had_thumb: HashSet<i64> = {
+            let db = self.db();
+            let mut stmt = db.prepare("SELECT id FROM entries WHERE thumb_blake3 IS NOT NULL")?;
+            stmt.query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?
+        };
+        store::set_cursor(&self.db(), s.ring.id, 0)?;
+        self.sync_index_inner(s).await?;
+        let scan = self.scan_local_inner()?;
+        let (total_entries, thumbs_updated, queued, retried) = {
+            let db = self.db();
+            let retried = db.execute(
+                "UPDATE outbox SET next_try_at = NULL WHERE next_try_at IS NOT NULL",
+                [],
+            )? as u32;
+            let total_entries: u32 =
+                db.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
+            let mut stmt = db.prepare("SELECT id FROM entries WHERE thumb_blake3 IS NOT NULL")?;
+            let now_thumb: Vec<i64> = stmt
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let thumbs_updated = now_thumb
+                .into_iter()
+                .filter(|id| !had_thumb.contains(id))
+                .count() as u32;
+            let queued: u32 = db.query_row(
+                "SELECT COUNT(*) FROM entries e
+                 LEFT JOIN outbox o ON o.entry_id = e.id
+                 WHERE o.entry_id IS NOT NULL
+                    OR (e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL)",
+                [],
+                |r| r.get(0),
+            )?;
+            (total_entries, thumbs_updated, queued, retried)
+        };
+        let missing_thumbs = self.count_missing_thumbs(None)?;
+        Ok(VerifyReport {
+            total_entries,
+            thumbs_updated,
+            missing_thumbs,
+            ring_queued,
+            scan,
+            queued,
+            retried,
+        })
     }
 
     async fn run_job(
@@ -688,6 +898,13 @@ impl Moon {
             .filter_map(|i| plan.chunk_range(*i))
             .map(|(_, len)| len)
             .sum();
+        // Announce the active file immediately so the UI marks it UPLOADING
+        // while the first chunk is still in flight.
+        if sent < job.snapshot.size
+            && let Some(l) = listener
+        {
+            l.on_upload_progress(job.entry.ring_path.clone(), sent, job.snapshot.size);
+        }
         for i in 0..chunk_count {
             if have.contains(&i) {
                 continue;

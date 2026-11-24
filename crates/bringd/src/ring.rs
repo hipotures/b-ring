@@ -148,6 +148,7 @@ impl Ring {
 
     pub fn router(&self) -> Router {
         server::router(AppState {
+            root: self.root.clone(),
             db: self.db.clone(),
             ring_id: self.ring_id.clone(),
             thumbs: self.thumbs.clone(),

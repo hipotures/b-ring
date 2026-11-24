@@ -1,10 +1,11 @@
 use axum::Json;
 use axum::extract::{Query, State};
-use bring_core::api::{INDEX_MAX_LIMIT, IndexResponse};
+use bring_core::api::{INDEX_MAX_LIMIT, IndexResponse, RescanResponse};
 use serde::Deserialize;
+use tracing::info;
 
 use super::{ApiError, AppState};
-use crate::store;
+use crate::{scanner, store};
 
 #[derive(Debug, Deserialize)]
 pub struct IndexQuery {
@@ -32,4 +33,18 @@ pub async fn index(
         next_since,
         has_more,
     }))
+}
+
+/// `POST /rescan` — reconcile the Ring root with the index and queue any
+/// missing hashes or thumbnails for generation.
+pub async fn rescan(State(state): State<AppState>) -> Result<Json<RescanResponse>, ApiError> {
+    let root = state.root.clone();
+    let db = state.db.clone();
+    let to_hash = tokio::task::spawn_blocking(move || scanner::reconcile(&root, &db, None))
+        .await
+        .map_err(ApiError::internal)??;
+    let queued = to_hash.len() as u32;
+    state.hashq.enqueue_all(to_hash);
+    info!(queued, "on-demand rescan queued");
+    Ok(Json(RescanResponse { queued }))
 }

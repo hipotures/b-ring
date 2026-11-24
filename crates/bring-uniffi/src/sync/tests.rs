@@ -270,3 +270,13 @@ fn free_local_deletes_only_verified_synced_copies() {
     }
     assert_eq!(get(&c, "V/b.mp4").unwrap().state, FileState::Synced);
 }
+
+#[test]
+fn looks_thumbable_matches_images_and_videos_only() {
+    assert!(looks_thumbable(Some("video/mp4"), "a/b.mp4"));
+    assert!(looks_thumbable(Some("image/jpeg"), "a/b.jpg"));
+    assert!(looks_thumbable(None, "a/BVR 2026-11-20.MP4"));
+    assert!(!looks_thumbable(Some("image/svg+xml"), "a/icon.svg"));
+    assert!(!looks_thumbable(Some("application/pdf"), "a/doc.pdf"));
+    assert!(!looks_thumbable(None, "a/notes.txt"));
+}

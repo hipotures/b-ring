@@ -82,6 +82,9 @@ private val OFFLOAD_CHOICES = listOf(
 fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     val context = LocalContext.current
     val route by vm.route.collectAsStateWithLifecycle()
+    val sync by vm.sync.collectAsStateWithLifecycle()
+    val verify by vm.verify.collectAsStateWithLifecycle()
+    val entries by vm.entries.collectAsStateWithLifecycle()
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -117,6 +120,50 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
                 color = Tm.colors.text2,
             )
             SharpButton("Check again", onClick = vm::recheckRoute)
+        }
+
+        val queued = remember(entries) { entries.count { it.uploadPending } }
+        Panel(
+            title = "Sync & index",
+            trailing = {
+                when (val v = verify) {
+                    AppViewModel.VerifyState.Idle -> if (queued > 0) {
+                        StatusPlate("$queued queued", PlateMark.PENDING, small = true)
+                    }
+                    AppViewModel.VerifyState.Running -> StatusPlate("Checking…", PlateMark.ACTIVE, small = true)
+                    is AppViewModel.VerifyState.Done -> StatusPlate(
+                        if (v.warning) "Attention" else "Verified",
+                        if (v.warning) PlateMark.WARNING else PlateMark.COMPLETE,
+                        small = true,
+                    )
+                    is AppViewModel.VerifyState.Failed -> StatusPlate("Failed", PlateMark.ERROR, small = true)
+                }
+            },
+        ) {
+            Text(
+                "Re-reads the Ring index from scratch, asks the Ring to regenerate missing thumbnails, " +
+                    "rescans watched folders and retries queued uploads.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Tm.colors.text2,
+            )
+            when (val v = verify) {
+                is AppViewModel.VerifyState.Done -> Text(v.summary, style = Tm.text.code, color = Tm.colors.text)
+                is AppViewModel.VerifyState.Failed -> ErrorLine(v.error)
+                else -> {}
+            }
+            val checking = verify is AppViewModel.VerifyState.Running
+            SharpButton(
+                if (checking) "Checking…" else "Check sync & thumbnails",
+                enabled = !sync.running && !checking,
+                onClick = vm::verifySync,
+            )
+            if (sync.running) {
+                Text(
+                    "Wait for the current upload to finish.",
+                    style = Tm.text.code,
+                    color = Tm.colors.text2,
+                )
+            }
         }
 
         PermissionsPanel(storage)

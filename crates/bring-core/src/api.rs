@@ -74,6 +74,13 @@ pub struct IndexResponse {
     pub has_more: bool,
 }
 
+/// `POST /rescan`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RescanResponse {
+    /// Files queued for hashing or thumbnail generation.
+    pub queued: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Uploads
 // ---------------------------------------------------------------------------

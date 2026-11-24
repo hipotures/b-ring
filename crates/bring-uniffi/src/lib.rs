@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 pub use error::MoonError;
 pub use pairing::{PairedRing, PairingSas};
 pub use store::WatchedFolder;
-pub use sync::{FreeReport, IndexReport, OutboxReport, ScanReport, SyncReport};
+pub use sync::{FreeReport, IndexReport, OutboxReport, ScanReport, SyncReport, VerifyReport};
 
 /// The version of the core library (shown in the app's "about" screen).
 #[uniffi::export]
@@ -551,7 +551,7 @@ impl Moon {
             .block_on(self.process_outbox_inner(&s, listener.as_ref()))
     }
 
-    /// Index → scan → outbox → index (to pick up our own uploads).
+    /// Index → scan → outbox → index (to pick up our own uploads and thumbs).
     pub fn run_sync(
         &self,
         listener: Option<Arc<dyn TransferListener>>,
@@ -562,16 +562,28 @@ impl Moon {
         self.rt.block_on(async {
             let mut index = self.sync_index_inner(&s).await?;
             let scan = self.scan_local_inner()?;
-            let outbox = self.process_outbox_inner(&s, listener.as_ref()).await?;
+            let (outbox, uploaded_ids) =
+                self.process_outbox_tracked(&s, listener.as_ref()).await?;
             let after = self.sync_index_inner(&s).await?;
             index.received += after.received;
             index.cursor = after.cursor;
+            self.wait_for_thumbs(&s, &uploaded_ids, &mut index).await;
             Ok(SyncReport {
                 index,
                 scan,
                 outbox,
             })
         })
+    }
+
+    /// Full check & repair: triggers a Ring rescan (for missing thumbnails or
+    /// hashes), rewinds the delta cursor to 0 and re-reads the Ring index,
+    /// rescans watched folders, and clears retry backoff on queued uploads.
+    pub fn verify_sync(&self) -> Result<VerifyReport, MoonError> {
+        let _w = self.work();
+        self.cancel.store(false, Ordering::Relaxed);
+        let s = self.session()?;
+        self.rt.block_on(self.verify_sync_inner(&s))
     }
 
     /// Deletes the local copies of the given `synced` entries (the files

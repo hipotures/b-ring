@@ -14,8 +14,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import coil3.SingletonImageLoader
 import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.RingInfo
+import io.github.hipotures.bring.ffi.VerifyReport
 import io.github.hipotures.bring.ffi.WatchedFolder
 import io.github.hipotures.bring.storage.StorageAccess
 import io.github.hipotures.bring.ui.ThemeChoice
@@ -25,16 +27,20 @@ import io.github.hipotures.bring.sync.SyncWorker
 import io.github.hipotures.bring.sync.onUnmeteredWifi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /** What the status bar shows about sync. */
@@ -80,11 +86,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A one-line result of the last user action (errors included). */
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    sealed interface VerifyState {
+        data object Idle : VerifyState
+        data object Running : VerifyState
+        data class Done(val summary: String, val warning: Boolean = false) : VerifyState
+        data class Failed(val error: String) : VerifyState
+    }
+
+    private val _verify = MutableStateFlow<VerifyState>(VerifyState.Idle)
+    val verify: StateFlow<VerifyState> = _verify.asStateFlow()
+
     private val workInfos = wm.getWorkInfosByTagFlow(SyncScheduler.TAG)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val sync: StateFlow<SyncUi> = workInfos
-        .map(::syncUi)
+    val sync: StateFlow<SyncUi> = combine(bring.activeSync, workInfos) { live, infos ->
+        if (live.running) live else syncUi(infos)
+    }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUi())
 
@@ -118,14 +135,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { trackRounds() }
         viewModelScope.launch { syncFinished.collect { loadEntries() } }
         // During a long round, reload the list as uploads move on (at most
-        // every 3 s), so files turn SYNCED without waiting for the end.
+        // every 1.5 s, without dropping the last transition), so files turn
+        // SYNCED/REMOTE and pick up thumbnails without waiting for the end.
         viewModelScope.launch {
-            var lastAt = 0L
-            sync.map { it.path }.distinctUntilChanged().collect { path ->
-                val now = SystemClock.elapsedRealtime()
-                if (path != null && now - lastAt > 3_000) {
-                    lastAt = now
+            sync.map { it.path }.distinctUntilChanged().conflate().collect { path ->
+                if (path != null) {
                     loadEntries()
+                    delay(1_500)
                 }
             }
         }
@@ -204,6 +220,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _syncError.value = null
         SyncScheduler.syncNow(getApplication())
     }
+
+    /**
+     * Full check & repair: asks the Ring to rescan missing hashes/thumbnails,
+     * re-reads the Ring index from seq 0, rescans watched folders, clears
+     * empty cached thumbnails and retries any queued uploads.
+     */
+    fun verifySync() {
+        if (_verify.value is VerifyState.Running) return
+        _verify.value = VerifyState.Running
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            _verify.value = try {
+                bring.syncMutex.withLock {
+                    val route = bring.moon.selectRoute(app.onUnmeteredWifi())
+                    bring.route.value = RouteStatus.of(route)
+                    if (route == null) {
+                        VerifyState.Failed("Ring unreachable")
+                    } else {
+                        File(app.cacheDir, "thumbs").listFiles()
+                            ?.filter { it.isFile && it.length() == 0L }
+                            ?.forEach { it.delete() }
+                        val r = bring.moon.verifySync()
+                        SingletonImageLoader.get(app).memoryCache?.clear()
+                        runCatching { bring.moon.entries(null) }.onSuccess { _entries.value = it }
+                        if (r.queued > 0u) SyncScheduler.syncNow(app)
+                        VerifyState.Done(
+                            summary = formatVerifyReport(r),
+                            warning = r.missingThumbs > 0u || r.queued > 0u,
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                VerifyState.Failed(e.describe())
+            }
+        }
+    }
+
+    private fun formatVerifyReport(r: VerifyReport): String = buildList {
+        add("${r.totalEntries} files indexed")
+        if (r.thumbsUpdated > 0u) add("${r.thumbsUpdated} thumbs refreshed")
+        if (r.ringQueued > 0u) add("${r.ringQueued} queued on Ring")
+        if (r.missingThumbs > 0u) add("${r.missingThumbs} thumbs still missing")
+        val localChanges = r.scan.newFiles + r.scan.changed + r.scan.gone
+        if (localChanges > 0u) add("$localChanges local changes found")
+        if (r.retried > 0u) add("${r.retried} retries reset")
+        if (r.queued > 0u) add("${r.queued} queued to upload")
+        if (r.thumbsUpdated == 0u && r.missingThumbs == 0u && localChanges == 0u && r.queued == 0u) {
+            add("everything in sync")
+        }
+    }.joinToString(" · ")
 
     /**
      * Detects the end of each round from state transitions seen in this
@@ -316,10 +382,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun syncUi(infos: List<WorkInfo>): SyncUi {
-        val running = infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
-        val p = running?.progress
+        val running = infos.filter { it.state == WorkInfo.State.RUNNING }
+        val active = running.firstOrNull { it.progress.getString(SyncWorker.KEY_PATH) != null }
+            ?: running.firstOrNull()
+        val p = active?.progress
         return SyncUi(
-            running = running != null,
+            running = active != null,
             path = p?.getString(SyncWorker.KEY_PATH),
             sent = p?.getLong(SyncWorker.KEY_SENT, 0) ?: 0,
             total = p?.getLong(SyncWorker.KEY_TOTAL, 0) ?: 0,

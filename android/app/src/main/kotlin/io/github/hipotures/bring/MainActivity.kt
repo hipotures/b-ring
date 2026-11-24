@@ -130,6 +130,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     onSettings = { screen = Screen.SETTINGS },
                     lastRound = rounds.firstOrNull(),
                     lastChecked = lastChecked,
+                    queued = entries.count { it.uploadPending },
                 )
                 BrowserScreen(
                     entries = entries,

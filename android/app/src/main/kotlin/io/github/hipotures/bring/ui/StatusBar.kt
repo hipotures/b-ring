@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.SyncUi
+import io.github.hipotures.bring.formatBytes
 import io.github.hipotures.bring.formatWhen
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncRound
@@ -64,6 +65,7 @@ fun TopStrip(
     onSettings: (() -> Unit)? = null,
     lastRound: SyncRound? = null,
     lastChecked: Long = 0L,
+    queued: Int = 0,
 ) {
     val c = Tm.colors
     Column(Modifier.fillMaxWidth().background(c.chrome)) {
@@ -88,6 +90,8 @@ fun TopStrip(
         }
         when {
             onSync == null -> {}
+            sync.running -> ActiveSync(sync, onActivity)
+            queued > 0 && lastRound?.error == null -> QueuedStatus(queued, lastChecked, onActivity)
             // A later check found nothing new: say that, not the old news.
             lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
             lastRound != null -> LastRound(lastRound, onActivity)
@@ -109,17 +113,35 @@ fun ActionIcon(icon: ImageVector, description: String, onClick: () -> Unit, enab
     }
 }
 
+/** [● Uploading]  42% · 1.2 GiB — same fixed-height row, so nothing below jumps. */
+@Composable
+private fun ActiveSync(sync: SyncUi, onClick: (() -> Unit)?) {
+    val label = if (sync.path != null) "Uploading" else "Syncing"
+    val detail = when {
+        sync.path == null -> ""
+        sync.total > 0 -> "${(sync.sent * 100 / sync.total).coerceIn(0, 100)}% · ${formatBytes(sync.bytes)}"
+        sync.bytes > 0 -> formatBytes(sync.bytes)
+        else -> ""
+    }
+    ResultRow(label, PlateMark.ACTIVE, detail, onClick)
+}
+
+/** [○ 2 queued]  Today 22:41 — files still waiting to upload. */
+@Composable
+private fun QueuedStatus(queued: Int, at: Long, onClick: (() -> Unit)?) =
+    ResultRow("$queued queued", PlateMark.PENDING, if (at > 0) formatWhen(at) else "", onClick)
+
 /** [✓ Uploaded 12 files (34 MiB)]  Today 19:24 — tappable to the history. */
 @Composable
 private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) =
-    ResultRow(roundTitle(r), if (r.error != null) PlateMark.ERROR else PlateMark.COMPLETE, r.endedAt, onClick)
+    ResultRow(roundTitle(r), if (r.error != null) PlateMark.ERROR else PlateMark.COMPLETE, formatWhen(r.endedAt), onClick)
 
 /** [✓ Up to date]  Today 19:40 — the last check found nothing new. */
 @Composable
-private fun LastCheck(at: Long, onClick: (() -> Unit)?) = ResultRow("Up to date", PlateMark.COMPLETE, at, onClick)
+private fun LastCheck(at: Long, onClick: (() -> Unit)?) = ResultRow("Up to date", PlateMark.COMPLETE, formatWhen(at), onClick)
 
 @Composable
-private fun ResultRow(text: String, mark: PlateMark, at: Long, onClick: (() -> Unit)?) {
+private fun ResultRow(text: String, mark: PlateMark, detail: String, onClick: (() -> Unit)?) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -130,6 +152,8 @@ private fun ResultRow(text: String, mark: PlateMark, at: Long, onClick: (() -> U
         horizontalArrangement = Arrangement.spacedBy(TmDimens.space3),
     ) {
         StatusPlate(text, mark, modifier = Modifier.weight(1f, fill = false))
-        Text(formatWhen(at), style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
+        if (detail.isNotEmpty()) {
+            Text(detail, style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
+        }
     }
 }

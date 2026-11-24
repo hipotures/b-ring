@@ -53,6 +53,7 @@ import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.EntryState
 import io.github.hipotures.bring.formatBytes
 import io.github.hipotures.bring.formatMtime
+import io.github.hipotures.bring.media.LocalVideoThumb
 import io.github.hipotures.bring.media.MediaKind
 import io.github.hipotures.bring.media.RingThumb
 import io.github.hipotures.bring.media.extensionOf
@@ -405,10 +406,11 @@ private fun MediaSquare(content: @Composable BoxScope.() -> Unit) {
 @Composable
 fun Thumb(entry: Entry, name: String) {
     val kind = remember(entry.mime, name) { kindOf(entry.mime, name) }
-    val model: Any? = remember(entry.thumb, entry.localPath, kind) {
+    val model: Any? = remember(entry.thumb, entry.localPath, entry.mtimeNs, kind) {
         when {
             entry.thumb != null -> RingThumb(entry.thumb!!)
             entry.localPath != null && kind == MediaKind.IMAGE -> File(entry.localPath!!)
+            entry.localPath != null && kind == MediaKind.VIDEO -> LocalVideoThumb(entry.localPath!!, entry.mtimeNs)
             else -> null
         }
     }

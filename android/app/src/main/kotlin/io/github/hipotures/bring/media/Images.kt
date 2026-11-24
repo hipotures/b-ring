@@ -1,6 +1,9 @@
 package io.github.hipotures.bring.media
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.media.ThumbnailUtils
+import android.util.Size
 import coil3.ImageLoader
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
@@ -15,10 +18,14 @@ import kotlinx.coroutines.withContext
 import okio.Buffer
 import okio.FileSystem
 import okio.Path.Companion.toOkioPath
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /** A Ring thumbnail (`thumb` BLAKE3), fetched through the engine's pinned client. */
 data class RingThumb(val hash: String)
+
+/** A local video file's thumbnail, extracted on-device before a Ring thumb exists. */
+data class LocalVideoThumb(val path: String, val mtimeNs: Long)
 
 /** A whole Ring file, for full-screen images. */
 data class RingImage(val fileId: Long, val blake3: String?, val size: ULong)
@@ -72,4 +79,35 @@ object RingThumbKeyer : Keyer<RingThumb> {
 object RingImageKeyer : Keyer<RingImage> {
     override fun key(data: RingImage, options: Options) =
         "ring:${data.fileId}:${data.blake3.orEmpty()}"
+}
+
+class LocalVideoThumbFetcher(
+    private val data: LocalVideoThumb,
+    private val options: Options,
+) : Fetcher {
+    override suspend fun fetch(): FetchResult? = withContext(Dispatchers.IO) {
+        val file = File(data.path)
+        if (!file.isFile) return@withContext null
+        val bmp = runCatching {
+            ThumbnailUtils.createVideoThumbnail(file, Size(256, 256), null)
+        }.getOrNull() ?: return@withContext null
+        val bytes = try {
+            ByteArrayOutputStream().use { out ->
+                bmp.compress(Bitmap.CompressFormat.JPEG, 82, out)
+                out.toByteArray()
+            }
+        } finally {
+            bmp.recycle()
+        }
+        SourceFetchResult(ImageSource(Buffer().write(bytes), options.fileSystem), "image/jpeg", DataSource.DISK)
+    }
+
+    class Factory : Fetcher.Factory<LocalVideoThumb> {
+        override fun create(data: LocalVideoThumb, options: Options, imageLoader: ImageLoader) =
+            LocalVideoThumbFetcher(data, options)
+    }
+}
+
+object LocalVideoThumbKeyer : Keyer<LocalVideoThumb> {
+    override fun key(data: LocalVideoThumb, options: Options) = "local-video:${data.path}:${data.mtimeNs}"
 }

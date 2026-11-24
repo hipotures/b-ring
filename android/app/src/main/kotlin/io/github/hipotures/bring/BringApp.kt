@@ -7,6 +7,8 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import io.github.hipotures.bring.ffi.Moon
+import io.github.hipotures.bring.media.LocalVideoThumbFetcher
+import io.github.hipotures.bring.media.LocalVideoThumbKeyer
 import io.github.hipotures.bring.media.RingImageFetcher
 import io.github.hipotures.bring.media.RingImageKeyer
 import io.github.hipotures.bring.media.RingThumbFetcher
@@ -15,6 +17,7 @@ import io.github.hipotures.bring.sync.Notifications
 import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.sync.SyncLog
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
 import java.io.File
 
 class BringApp : Application(), SingletonImageLoader.Factory {
@@ -25,6 +28,12 @@ class BringApp : Application(), SingletonImageLoader.Factory {
 
     /** Last route the engine selected (UI and worker both update it). */
     val route = MutableStateFlow(RouteStatus.UNKNOWN)
+
+    /** Serialises SyncWorker rounds and Settings verification so workers never fight over FGS/progress/cancel. */
+    val syncMutex = Mutex()
+
+    /** Live progress of the worker currently holding [syncMutex]. */
+    val activeSync = MutableStateFlow(SyncUi())
 
     /**
      * The sync engine. Opening it touches SQLite, so the first access must
@@ -51,6 +60,8 @@ class BringApp : Application(), SingletonImageLoader.Factory {
                 add(RingThumbKeyer)
                 add(RingImageFetcher.Factory { moon })
                 add(RingImageKeyer)
+                add(LocalVideoThumbFetcher.Factory())
+                add(LocalVideoThumbKeyer)
             }
             .build()
 }
