@@ -1,5 +1,9 @@
 package io.github.hipotures.bring
 
+import kotlinx.coroutines.withContext
+import java.io.File
+import android.widget.Toast
+import android.media.MediaScannerConnection
 import android.app.Application
 import android.net.ConnectivityManager
 import android.os.SystemClock
@@ -230,6 +234,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             if (ended) syncFinished.value++
+        }
+    }
+
+    /**
+     * Deletes the local copies of synced files; they stay on the Ring and
+     * become remote-only. The gallery forgets the deleted paths.
+     */
+    fun freeLocal(files: List<Entry>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = try {
+                val r = bring.moon.freeLocal(files.map { it.id })
+                val paths = files.mapNotNull { it.localPath }.filter { !File(it).exists() }
+                if (paths.isNotEmpty()) MediaScannerConnection.scanFile(getApplication(), paths.toTypedArray(), null, null)
+                buildString {
+                    val n = r.freed.toInt()
+                    append("Removed $n ${if (n == 1) "file" else "files"} from the phone (${formatBytes(r.freedBytes)})")
+                    if (r.skipped > 0u) append(" · ${r.skipped} skipped: changed or not synced")
+                }
+            } catch (e: Exception) {
+                e.describe()
+            }
+            loadEntries()
+            withContext(Dispatchers.Main) { Toast.makeText(getApplication(), text, Toast.LENGTH_LONG).show() }
         }
     }
 

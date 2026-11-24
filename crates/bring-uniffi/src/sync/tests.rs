@@ -204,3 +204,69 @@ fn reappearing_file_takes_over_remote_entry() {
     assert_eq!(e.state, FileState::LocalOnly);
     assert!(e.local_path.is_some());
 }
+
+#[test]
+fn free_local_deletes_only_verified_synced_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = |name: &str, body: &[u8]| {
+        let p = tmp.path().join(name);
+        fs::write(&p, body).unwrap();
+        let st = local_stat(&p).unwrap().unwrap();
+        (p.to_str().unwrap().to_owned(), st)
+    };
+    let mut c = db();
+    let row = |c: &Connection, ring: &str, local: &str, st: LocalStat, state: &str| {
+        c.execute(
+            "INSERT INTO entries (ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
+             VALUES (?1, ?2, 9, ?3, ?4, ?5, ?6)",
+            params![ring, local, st.size, st.mtime_ns, hash_bytes(b"x"), state],
+        )
+        .unwrap();
+        c.last_insert_rowid()
+    };
+    let (a, sa) = file("a.mp4", b"aaaa");
+    let (b, sb) = file("b.mp4", b"bbbb");
+    let (l, sl) = file("l.mp4", b"llll");
+    let (p, sp) = file("p.mp4", b"pppp");
+    let ia = row(&c, "V/a.mp4", &a, sa, "synced");
+    // Edited after it was verified: kept.
+    let ib = row(
+        &c,
+        "V/b.mp4",
+        &b,
+        LocalStat {
+            size: sb.size,
+            mtime_ns: sb.mtime_ns - 1,
+        },
+        "synced",
+    );
+    // Only on the phone: never deleted.
+    let il = row(&c, "V/l.mp4", &l, sl, "local-only");
+    // Synced but waiting in the outbox: kept.
+    let ip = row(&c, "V/p.mp4", &p, sp, "synced");
+    c.execute(
+        "INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns) VALUES (?1, 4, 0)",
+        [ip],
+    )
+    .unwrap();
+
+    let r = free_local(&mut c, &[ia, ib, il, ip, 999]).unwrap();
+    assert_eq!(
+        r,
+        FreeReport {
+            freed: 1,
+            freed_bytes: 4,
+            skipped: 4
+        }
+    );
+    assert!(!Path::new(&a).exists());
+    let e = get(&c, "V/a.mp4").unwrap();
+    assert_eq!(
+        (e.state, e.local_path, e.remote_file_id),
+        (FileState::RemoteOnly, None, Some(9))
+    );
+    for kept in [&b, &l, &p] {
+        assert!(Path::new(kept).exists(), "{kept} must stay");
+    }
+    assert_eq!(get(&c, "V/b.mp4").unwrap().state, FileState::Synced);
+}

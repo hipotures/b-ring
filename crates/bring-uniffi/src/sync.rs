@@ -69,6 +69,17 @@ pub struct OutboxReport {
     pub remaining: u32,
 }
 
+/// Result of [`Moon::free_local`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct FreeReport {
+    /// Local copies deleted (the entries are now `remote-only`).
+    pub freed: u32,
+    pub freed_bytes: u64,
+    /// Entries left alone: not synced, waiting for an upload, or the local
+    /// file is gone or no longer what was verified against the Ring.
+    pub skipped: u32,
+}
+
 /// Result of [`Moon::run_sync`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct SyncReport {
@@ -91,6 +102,62 @@ pub(crate) fn local_stat(path: &Path) -> io::Result<Option<LocalStat>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+/// Deletes the local copies of `synced` entries, which become `remote-only`
+/// (the same rule as offload, §3.5 step 5, chosen by the user). Only an
+/// entry the Ring holds verified bytes for qualifies, and only while the
+/// local file still has the size and mtime that were verified; anything
+/// else is skipped. Database first, then the delete; the Ring is never
+/// touched (Moon cannot delete Ring files at all).
+pub(crate) fn free_local(c: &mut Connection, ids: &[i64]) -> Result<FreeReport, MoonError> {
+    let mut report = FreeReport::default();
+    for &id in ids {
+        let tx = c.transaction()?;
+        let row = store::entry_by_id(&tx, id)?;
+        let pending: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM outbox WHERE entry_id = ?1)",
+            [id],
+            |r| r.get(0),
+        )?;
+        let target = row.and_then(
+            |r| match (r.state, r.local_path, r.remote_file_id, r.blake3) {
+                (FileState::Synced, Some(local), Some(_), Some(_)) if !pending => Some((
+                    local,
+                    LocalStat {
+                        size: r.size,
+                        mtime_ns: r.mtime_ns,
+                    },
+                )),
+                _ => None,
+            },
+        );
+        let Some((local, verified)) = target else {
+            report.skipped += 1;
+            continue;
+        };
+        let path = Path::new(&local);
+        if local_stat(path)? != Some(verified) {
+            // Edited or gone: the next scan sorts it out.
+            report.skipped += 1;
+            continue;
+        }
+        tx.execute(
+            "UPDATE entries SET state = 'remote-only', local_path = NULL WHERE id = ?1",
+            [id],
+        )?;
+        tx.commit()?;
+        // Last check right before deleting; if it was touched in between,
+        // keep it: the row is remote-only, so the next scan uploads it.
+        if local_stat(path)? == Some(verified) {
+            fs::remove_file(path)?;
+            report.freed += 1;
+            report.freed_bytes += verified.size;
+        } else {
+            report.skipped += 1;
+        }
+    }
+    Ok(report)
 }
 
 /// A regular file found under a watched folder.

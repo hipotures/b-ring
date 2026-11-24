@@ -480,3 +480,31 @@ fun BusyBar(modifier: Modifier = Modifier) {
         gapSize = 0.dp,
     )
 }
+
+/**
+ * Overlay dialog: 2 dp `line1` frame and a hard offset shadow, no soft
+ * elevation; the action is a danger button.
+ */
+@Composable
+fun ConfirmDialog(
+    title: String,
+    text: String,
+    action: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        // The padding keeps the offset shadow inside the dialog window.
+        modifier = Modifier
+            .padding(end = TmDimens.shadowOverlay, bottom = TmDimens.shadowOverlay)
+            .tmHardShadow(Tm.colors.shadowOverlay, TmDimens.shadowOverlay)
+            .border(TmDimens.bw1, Tm.colors.line1, MaterialTheme.shapes.extraLarge),
+        containerColor = Tm.colors.surface,
+        tonalElevation = 0.dp,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = { SharpButton(action, danger = true, primary = true, onClick = onConfirm) },
+        dismissButton = { SharpButton("Cancel", onClick = onDismiss) },
+    )
+}

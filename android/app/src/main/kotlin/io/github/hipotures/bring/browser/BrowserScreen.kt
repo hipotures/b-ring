@@ -1,5 +1,14 @@
 package io.github.hipotures.bring.browser
 
+import io.github.hipotures.bring.ui.SharpButton
+import io.github.hipotures.bring.ui.ConfirmDialog
+import io.github.hipotures.bring.ui.ActionIcon
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.foundation.combinedClickable
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -77,6 +86,8 @@ fun BrowserScreen(
     header: @Composable () -> Unit,
     /** Ring path of the file being uploaded right now, if any. */
     uploading: String? = null,
+    /** Delete the local copies of these synced files (they stay on the Ring). */
+    onFreeLocal: (List<Entry>) -> Unit = {},
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
@@ -90,8 +101,22 @@ fun BrowserScreen(
     val rows = remember(shown, dir) {
         listDir(shown, dir, { it.ringPath }, { it.size.toLong() }, newestFirst)
     }
+    // Long-press starts selecting; a tap then toggles instead of opening.
+    var selected by remember(dir) { mutableStateOf(emptySet<Long>()) }
+    val picked = remember(here, selected) { here.filter { it.id in selected } }
+    val selecting = picked.isNotEmpty()
+    var confirm by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    BackHandler(enabled = selecting) { selected = emptySet() }
+    fun toggle(e: Entry) {
+        selected = if (e.id in selected) selected - e.id else selected + e.id
+    }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
+    Box(Modifier.fillMaxSize()) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = if (selecting) 160.dp else TmDimens.space6),
+    ) {
         item { Box(Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2)) { header() } }
         item { Breadcrumbs(dir, onDir) }
         item {
@@ -127,9 +152,101 @@ fun BrowserScreen(
         }) { row ->
             when (row) {
                 is DirRow.Folder -> FolderRow(row) { onDir(row.path) }
-                is DirRow.File -> FileRow(row.item, row.name, row.item.ringPath == uploading) { onOpen(row.item) }
+                is DirRow.File -> FileRow(
+                    row.item,
+                    row.name,
+                    uploading = row.item.ringPath == uploading,
+                    selected = row.item.id in selected,
+                    onClick = { if (selecting) toggle(row.item) else onOpen(row.item) },
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        toggle(row.item)
+                    },
+                )
             }
             RowDivider()
+        }
+    }
+    if (selecting) {
+        SelectionBar(
+            picked = picked,
+            onClear = { selected = emptySet() },
+            onAll = { selected = rows.filterIsInstance<DirRow.File<Entry>>().map { it.item.id }.toSet() },
+            onFree = { confirm = true },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+    }
+
+    if (confirm) {
+        val synced = picked.filter { it.isFreeable() }
+        ConfirmDialog(
+            title = "Remove ${files(synced.size)} from this phone?",
+            text = "${formatBytes(synced.sumOf { it.size })} freed. " +
+                (if (synced.size == 1) "The file stays on the Ring and shows" else "The files stay on the Ring and show") +
+                " as Remote: you can still open and stream ${if (synced.size == 1) "it" else "them"} here.",
+            action = "Remove from phone",
+            onConfirm = {
+                confirm = false
+                onFreeLocal(synced)
+                selected = emptySet()
+            },
+            onDismiss = { confirm = false },
+        )
+    }
+}
+
+/** Only a synced copy (verified on the Ring, nothing pending) may go. */
+private fun Entry.isFreeable() = state == EntryState.SYNCED && !uploadPending && localPath != null
+
+private fun files(n: Int) = "$n ${if (n == 1) "file" else "files"}"
+
+/**
+ * Bottom bar while selecting, on `chrome` with a `line1` rule: count and
+ * size, select all, close; the action names how many files it applies to.
+ */
+@Composable
+private fun SelectionBar(
+    picked: List<Entry>,
+    onClear: () -> Unit,
+    onAll: () -> Unit,
+    onFree: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = Tm.colors
+    val freeable = picked.count { it.isFreeable() }
+    Column(modifier.fillMaxWidth().background(c.chrome)) {
+        HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
+        Column(
+            Modifier.padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
+            verticalArrangement = Arrangement.spacedBy(TmDimens.space1),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ActionIcon(Icons.Outlined.Close, "Clear selection", onClear)
+                Text(
+                    "${picked.size} selected · ${formatBytes(picked.sumOf { it.size })}",
+                    style = Tm.text.numeric,
+                    color = c.text,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                SharpButton("Select all", onClick = onAll)
+            }
+            SharpButton(
+                if (freeable == 0) "Only synced files can be removed" else "Remove from phone ($freeable)",
+                onClick = onFree,
+                enabled = freeable > 0,
+                danger = true,
+                primary = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (freeable in 1 until picked.size) {
+                Text(
+                    "${picked.size - freeable} skipped: only synced files have a copy here to remove.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.text2,
+                )
+            }
         }
     }
 }
@@ -166,12 +283,18 @@ private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
 
 /** Record row on `surface`: 56 dp media square, name (wraps to two lines), mono meta. */
 @Composable
-private fun RecordRow(onClick: () -> Unit, leading: @Composable () -> Unit, content: @Composable () -> Unit) {
+private fun RecordRow(
+    onClick: () -> Unit,
+    leading: @Composable () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    selected: Boolean = false,
+    content: @Composable () -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Tm.colors.surface)
-            .clickable(onClick = onClick)
+            .background(if (selected) Tm.colors.selectBg else Tm.colors.surface)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -207,8 +330,35 @@ private fun FolderRow(row: DirRow.Folder, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FileRow(entry: Entry, name: String, uploading: Boolean, onClick: () -> Unit) {
-    RecordRow(onClick, leading = { Thumb(entry, name) }) {
+private fun FileRow(
+    entry: Entry,
+    name: String,
+    uploading: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    RecordRow(
+        onClick,
+        onLongClick = onLongClick,
+        selected = selected,
+        leading = {
+            Box {
+                Thumb(entry, name)
+                if (selected) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .size(22.dp)
+                            .background(Tm.colors.selectLine),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp), tint = Tm.colors.surface)
+                    }
+                }
+            }
+        },
+    ) {
         Name(name)
         Text(
             "${formatBytes(entry.size)} · ${formatMtime(entry.mtimeNs)}",

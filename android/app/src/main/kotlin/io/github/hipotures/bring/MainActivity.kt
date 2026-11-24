@@ -143,6 +143,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                         SetupPanel(storage, folders.size, onOpenSettings = { screen = Screen.SETTINGS })
                     },
                     uploading = sync.path.takeIf { sync.running },
+                    onFreeLocal = vm::freeLocal,
                 )
             }
             Screen.VIEW -> {

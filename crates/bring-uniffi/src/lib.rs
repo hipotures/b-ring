@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 pub use error::MoonError;
 pub use pairing::{PairedRing, PairingSas};
 pub use store::WatchedFolder;
-pub use sync::{IndexReport, OutboxReport, ScanReport, SyncReport};
+pub use sync::{FreeReport, IndexReport, OutboxReport, ScanReport, SyncReport};
 
 /// The version of the core library (shown in the app's "about" screen).
 #[uniffi::export]
@@ -572,6 +572,14 @@ impl Moon {
                 outbox,
             })
         })
+    }
+
+    /// Deletes the local copies of the given `synced` entries (the files
+    /// stay on the Ring; the entries become `remote-only`). Entries that are
+    /// not synced, wait for an upload, or changed locally are skipped.
+    /// Does not wait for a running sync.
+    pub fn free_local(&self, ids: Vec<i64>) -> Result<FreeReport, MoonError> {
+        sync::free_local(&mut self.db(), &ids)
     }
 
     /// Asks a running sync to stop at the next file or chunk boundary.
