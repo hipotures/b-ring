@@ -1,0 +1,15 @@
+[package]
+name = "bringd"
+description = "B-Ring Linux daemon: HTTP API, filesystem watcher, thumbnails, streaming"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+bring-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license = "CC0-1.0"
+repository = "https://github.com/hipotures/b-ring"
+publish = false
+
+[workspace.dependencies]
+bring-core = { path = "crates/bring-core" }
+uniffi = "0.32.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

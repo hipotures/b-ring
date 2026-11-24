@@ -1,0 +1,19 @@
+[package]
+name = "bring-cli"
+description = "B-Ring companion CLI (`bring`) talking to bringd over a Unix socket"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "bring"
+path = "src/main.rs"
+
+[dependencies]
+bring-core.workspace = true
+
+[lints]
+workspace = true
