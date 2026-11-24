@@ -1,0 +1,3 @@
+[submodule "android/third_party/the-mechanics"]
+	path = android/third_party/the-mechanics
+	url = https://github.com/hipotures/the-mechanics.git
