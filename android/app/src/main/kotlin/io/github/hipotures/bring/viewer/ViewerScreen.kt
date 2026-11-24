@@ -176,7 +176,10 @@ private fun InfoBar(
     Column(modifier.fillMaxWidth().background(c.surface)) {
         HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         Row(
-            Modifier.fillMaxWidth().padding(start = TmDimens.regionPad, end = TmDimens.space3, top = TmDimens.space1),
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(start = TmDimens.regionPad, end = TmDimens.space3, top = TmDimens.space1),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
@@ -189,16 +192,18 @@ private fun InfoBar(
                 modifier = Modifier.weight(1f),
             )
             if (local != null) SharpButton("Open with…", onClick = { message = openLocal(context, local, e.mime) })
+            badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
         }
         Row(
             Modifier
                 .fillMaxWidth()
+                // The whole line toggles the details; the chevron shows which way.
+                .clickable(enabled = media) { onOpen(!open) }
                 .heightIn(min = 48.dp)
-                .padding(start = TmDimens.regionPad),
+                .padding(start = TmDimens.regionPad, end = if (media) 0.dp else TmDimens.space3),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
-            badgesFor(e.state, e.uploadPending, e.lastError, e.suppressed).forEach { BadgeChip(it) }
             Text(
                 "${formatBytes(e.size)} · ${formatMtime(e.mtimeNs)}",
                 style = Tm.text.numeric,
@@ -208,18 +213,10 @@ private fun InfoBar(
                 modifier = Modifier.weight(1f),
             )
             if (media) {
-                Row(
-                    Modifier
-                        .clickable { onOpen(!open) }
-                        .heightIn(min = 48.dp)
-                        .padding(horizontal = TmDimens.space3),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1),
-                ) {
-                    Text("Details", style = MaterialTheme.typography.labelMedium, color = c.link)
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                     Icon(
                         if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
-                        contentDescription = null,
+                        contentDescription = if (open) "Hide details" else "Show details",
                         tint = c.link,
                         modifier = Modifier.size(TmDimens.iconLg),
                     )
