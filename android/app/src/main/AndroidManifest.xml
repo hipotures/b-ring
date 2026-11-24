@@ -68,10 +68,12 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
-        <!-- ZXing's scanner, allowed to follow the device orientation. -->
+        <!-- ZXing's scanner with robust global+hybrid binarization, allowed to follow orientation. -->
         <activity
-            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:name=".pairing.QrCaptureActivity"
             android:screenOrientation="fullSensor"
-            tools:replace="android:screenOrientation" />
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
     </application>
 </manifest>

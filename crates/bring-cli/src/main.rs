@@ -168,9 +168,13 @@ fn qr_ansi(qr: &QrCode) -> String {
     let mut out = String::new();
     for y in (0..size).step_by(2) {
         for x in 0..size {
-            let fg = if dark(x, y) { 30 } else { 97 };
-            let bg = if dark(x, y + 1) { 40 } else { 107 };
-            out.push_str(&format!("\x1b[{fg};{bg}m▀"));
+            match (dark(x, y), dark(x, y + 1)) {
+                // Solid spaces for matching pairs avoid half-block glyph seams inside modules.
+                (true, true) => out.push_str("\x1b[40m "),
+                (false, false) => out.push_str("\x1b[107m "),
+                (true, false) => out.push_str("\x1b[30;107m▀"),
+                (false, true) => out.push_str("\x1b[97;40m▀"),
+            }
         }
         out.push_str("\x1b[0m\n");
     }
@@ -299,15 +303,21 @@ mod tests {
         let out = qr_ansi(&qr);
         let rows: Vec<Vec<&str>> = out
             .lines()
-            .map(|l| l.split('▀').filter(|c| c.contains(";")).collect())
+            .map(|l| {
+                l.strip_suffix("\x1b[0m")
+                    .unwrap()
+                    .split('\x1b')
+                    .skip(1)
+                    .collect()
+            })
             .collect();
         assert_eq!(rows.len(), size.div_ceil(2));
         assert!(rows.iter().all(|r| r.len() == size));
         // Quiet zone: the first two module rows and the left margin are white.
-        assert!(rows[0].iter().all(|c| c.ends_with("[97;107m")));
-        assert!(rows.iter().all(|r| r[0].ends_with("[97;107m")));
+        assert!(rows[0].iter().all(|c| *c == "[107m "));
+        assert!(rows.iter().all(|r| r[0] == "[107m "));
         // Top-left finder pattern starts dark at module (4, 4): row pair 2.
-        assert!(rows[2][QUIET_ZONE].ends_with("[30;40m"));
+        assert_eq!(rows[2][QUIET_ZONE], "[40m ");
         assert!(out.lines().all(|l| l.ends_with("\x1b[0m")));
     }
 }

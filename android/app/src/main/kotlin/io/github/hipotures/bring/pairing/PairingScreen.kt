@@ -30,7 +30,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.zxing.client.android.Intents
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import io.github.hipotures.bring.ffi.RingInfo
@@ -105,11 +104,10 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         onClick = {
                             scanner.launch(
                                 ScanOptions()
+                                    .setCaptureActivity(QrCaptureActivity::class.java)
                                     .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                                     .setBeepEnabled(false)
                                     .setOrientationLocked(false)
-                                    // Terminals with a dark theme show the code inverted.
-                                    .addExtra(Intents.Scan.SCAN_TYPE, Intents.Scan.MIXED_SCAN)
                                     .setPrompt("Scan the code shown by `bring pair`"),
                             )
                         },
