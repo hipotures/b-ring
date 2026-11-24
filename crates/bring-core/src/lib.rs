@@ -4,6 +4,7 @@
 //! compiles cleanly for Android through `bring-uniffi`. See
 //! `docs/ARCHITECTURE.md`.
 
+pub mod api;
 pub mod db;
 pub mod hash;
 pub mod model;
