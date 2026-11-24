@@ -440,7 +440,9 @@ connection cancels the session.
 
   Otherwise traffic goes to `wan_url`.
 - **Background sync** (WorkManager constraint `UNMETERED` + Foreground Service
-  for transfers) runs only when the LAN check passes. Over cellular, sync runs
+  for transfers) runs only when the LAN check passes. A new file starts a round
+  within seconds (MediaStore content trigger); a 15-minute periodic round and
+  opening the app catch everything else. Over cellular, sync runs
   only when the user starts it manually.
 - **QR scanning** uses plain **ZXing** (`zxing-android-embedded`), with no
   Google Play Services dependency. The pairing screen also has a text field for
@@ -623,8 +625,11 @@ Each step has a gate: its tests must pass before the next step starts.
       `SharedPreferences`. A paired database without a token falls back to
       the pairing screen. Re-pairing with the same Ring keeps the index.
     - `SyncWorker`: `select_route`, then `run_sync` as a foreground
-      `dataSync` job. Stopping it calls `cancel()`. The 15-minute periodic
-      request (`UNMETERED`) runs only on LAN; "sync now" also runs over WAN.
+      `dataSync` job. Stopping it calls `cancel()`. Automatic rounds
+      (`UNMETERED`, LAN only): a one-shot request with MediaStore content-URI
+      triggers (images, video, files; 5 s update delay, 30 s max), re-armed by
+      every run; the 15-minute periodic request; and one on app open when the
+      last check is over a minute old. "Sync now" also runs over WAN.
       If Android refuses a foreground start from the background, the round
       runs as a normal worker.
     - The route is re-probed on every change of the default network.

@@ -140,6 +140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (ring != null && bring.tokens.load() != null) {
                 _pairing.value = Pairing.Paired(ring)
                 SyncScheduler.schedulePeriodic(getApplication())
+                SyncScheduler.watchMedia(getApplication())
                 loadFolders()
                 loadEntries()
                 probeRoute()
@@ -155,12 +156,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_pairing.value is Pairing.Paired) {
             networkChanged.tryEmit(Unit)
             loadEntries()
+            // Opening the app means "show me the current state": check now
+            // unless a round just ended (LAN only, as in the background).
+            if (System.currentTimeMillis() - bring.syncLog.lastChecked.value > 60_000) {
+                SyncScheduler.syncSoon(getApplication())
+            }
         }
     }
 
     fun onPaired(ring: RingInfo) {
         _pairing.value = Pairing.Paired(ring)
         SyncScheduler.schedulePeriodic(getApplication())
+        SyncScheduler.watchMedia(getApplication())
         // First listing of the Ring right away, over whichever route works.
         SyncScheduler.syncNow(getApplication())
         probeRoute()

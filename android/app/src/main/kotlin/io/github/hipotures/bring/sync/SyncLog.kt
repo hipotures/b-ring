@@ -77,13 +77,21 @@ class SyncLog(private val file: File, private val keep: Int = 100) {
     private val _rounds = MutableStateFlow(read())
     val rounds: StateFlow<List<SyncRound>> = _rounds.asStateFlow()
 
+    private val checkedFile = File(file.path + ".checked")
+
     /** End of the last round, idle ones included (epoch ms, 0 = never). */
-    private val _lastChecked = MutableStateFlow(_rounds.value.firstOrNull()?.endedAt ?: 0L)
+    private val _lastChecked = MutableStateFlow(
+        maxOf(
+            runCatching { checkedFile.readText().trim().toLong() }.getOrDefault(0L),
+            _rounds.value.firstOrNull()?.endedAt ?: 0L,
+        ),
+    )
     val lastChecked: StateFlow<Long> = _lastChecked.asStateFlow()
 
     @Synchronized
     fun add(round: SyncRound) {
         _lastChecked.value = round.endedAt
+        runCatching { checkedFile.writeText(round.endedAt.toString()) }
         if (!round.changed && !round.manual) return
         val next = (listOf(round) + _rounds.value).take(keep)
         _rounds.value = next

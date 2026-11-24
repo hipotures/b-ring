@@ -65,6 +65,7 @@ fun TopStrip(
     onActivity: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     lastRound: SyncRound? = null,
+    lastChecked: Long = 0L,
 ) {
     val c = Tm.colors
     Column(Modifier.fillMaxWidth().background(c.chrome)) {
@@ -89,7 +90,10 @@ fun TopStrip(
         }
         when {
             sync.running -> SyncBlock(sync)
-            lastRound != null && onSync != null -> LastRound(lastRound, onActivity)
+            onSync == null -> {}
+            // A later check found nothing new: say that, not the old news.
+            lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
+            lastRound != null -> LastRound(lastRound, onActivity)
         }
         HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
     }
@@ -110,7 +114,15 @@ fun ActionIcon(icon: ImageVector, description: String, onClick: () -> Unit, enab
 
 /** [✓ Uploaded 12 files (34 MiB)]  Today 19:24 — tappable to the history. */
 @Composable
-private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) {
+private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) =
+    ResultRow(roundTitle(r), if (r.error != null) PlateMark.ERROR else PlateMark.COMPLETE, r.endedAt, onClick)
+
+/** [✓ Up to date]  Today 19:40 — the last check found nothing new. */
+@Composable
+private fun LastCheck(at: Long, onClick: (() -> Unit)?) = ResultRow("Up to date", PlateMark.COMPLETE, at, onClick)
+
+@Composable
+private fun ResultRow(text: String, mark: PlateMark, at: Long, onClick: (() -> Unit)?) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -120,12 +132,8 @@ private fun LastRound(r: SyncRound, onClick: (() -> Unit)?) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(TmDimens.space3),
     ) {
-        StatusPlate(
-            roundTitle(r),
-            if (r.error != null) PlateMark.ERROR else PlateMark.COMPLETE,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Text(formatWhen(r.endedAt), style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
+        StatusPlate(text, mark, modifier = Modifier.weight(1f, fill = false))
+        Text(formatWhen(at), style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
     }
 }
 

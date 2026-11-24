@@ -129,6 +129,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     onActivity = { screen = Screen.ACTIVITY },
                     onSettings = { screen = Screen.SETTINGS },
                     lastRound = rounds.firstOrNull(),
+                    lastChecked = lastChecked,
                 )
                 BrowserScreen(
                     entries = entries,

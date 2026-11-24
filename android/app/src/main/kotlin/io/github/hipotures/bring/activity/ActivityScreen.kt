@@ -101,7 +101,8 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
                     r.route.ifEmpty { null },
                     if (r.manual) "manual" else "background",
                     formatDuration(r.durationMs),
-                ).joinToString(" · "),
+                    // Wrap only between parts, never inside "0.5 s" or "Today 19:24".
+                ).joinToString(" · ") { it.replace(' ', '\u00A0') },
                 style = Tm.text.numeric,
                 color = c.text2,
                 modifier = Modifier.weight(1f, fill = false),

@@ -33,6 +33,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val bring = applicationContext.bring
         val trigger = if (inputData.getBoolean(KEY_MANUAL, false)) Trigger.MANUAL else Trigger.AUTO
         if (bring.tokens.load() == null) return@withContext Result.success()
+        // Keep watching for new files: re-arm the media trigger.
+        SyncScheduler.watchMedia(applicationContext, rearm = inputData.getBoolean(KEY_MEDIA, false))
         val moon = bring.moon
 
         val route = try {
@@ -65,8 +67,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             route = route?.name ?: "",
             uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completed.size,
             uploadedBytes = progress.completedBytes,
-            // The Ring's index echoes this device's own uploads back.
-            received = report?.let { (it.index.received.toInt() - (it.outbox.uploaded + it.outbox.deduplicated).toInt()).coerceAtLeast(0) } ?: 0,
+            // Files new to this device; the engine leaves out our own
+            // uploads echoed back by the index.
+            received = report?.index?.received?.toInt() ?: 0,
             found = report?.let { (it.scan.newFiles + it.scan.changed).toInt() } ?: 0,
             offloaded = report?.outbox?.offloaded?.toInt() ?: 0,
             failed = report?.outbox?.failed?.toInt() ?: 0,
@@ -173,6 +176,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         private const val TAG = "SyncWorker"
         const val KEY_MANUAL = "manual"
+        const val KEY_MEDIA = "media"
         const val KEY_PATH = "path"
         const val KEY_SENT = "sent"
         const val KEY_TOTAL = "total"
