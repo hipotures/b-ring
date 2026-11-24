@@ -62,7 +62,8 @@ b-ring/
 │       ├── store.rs              # Moon SQLite access
 │       ├── error.rs              # MoonError (the one error Kotlin sees)
 │       └── pairing.rs            # pair_start / pair_finish
-├── android/                      # Gradle, app/ (Compose), cargo-ndk -> jniLibs
+├── android/                      # Gradle, app/ (Compose)
+│   └── build-rust.sh             # cargo-ndk -> jniLibs, uniffi-bindgen -> Kotlin
 ├── dist/systemd/bringd.service
 └── docs/
 ```
@@ -586,6 +587,21 @@ Each step has a gate: its tests must pass before the next step starts.
     - **10b — Android build.** Minimal Android command-line tools, one platform
       API, one NDK; `cargo-ndk -t arm64-v8a` builds the `.so`; `uniffi-bindgen`
       generates the Kotlin bindings.
+      - `android/build-rust.sh`: NDK `30.0.16248370` (pinned), `minSdk` 30
+        (the first API with `MANAGE_EXTERNAL_STORAGE`), compile SDK
+        `android-36`.
+      - `uniffi-bindgen` is a binary in `bring-uniffi` behind the `bindgen`
+        feature, so it always matches the crate's `uniffi` version. It runs
+        in library mode on the shipped `.so`.
+      - Kotlin package `io.github.hipotures.bring.ffi`
+        (`crates/bring-uniffi/uniffi.toml`). The generated bindings need
+        JNA (`net.java.dev.jna:jna:<v>@aar`) in step 11.
+      - Outputs (gitignored): `android/app/src/main/jniLibs/arm64-v8a/` and
+        `android/app/src/generated/kotlin/`.
+
+      *Gate:* the script produces an `arm64-v8a` `.so` that links only
+      system libraries (`libc`, `libm`, `libdl`), has 16 KB-aligned `LOAD`
+      segments (Android 15+), and Kotlin bindings exposing `Moon`.
 11. **Android.**
     - Pairing screen: ZXing QR scan, manual base32 entry and SAS confirmation.
     - LAN/WAN detection (§4).

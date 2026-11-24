@@ -12,6 +12,16 @@ publish.workspace = true
 crate-type = ["cdylib", "lib"]
 name = "bring_uniffi"
 
+# Kotlin binding generator, run by `android/build-rust.sh`. Behind a feature so
+# normal builds do not compile the bindgen CLI.
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
 [dependencies]
 bring-core.workspace = true
 getrandom.workspace = true

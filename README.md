@@ -6,7 +6,7 @@ truth.
 
 - Design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Workspace: `crates/bring-core`, `crates/bringd`, `crates/bring-cli` (`bring`),
-  `crates/bring-uniffi`; Android client in `android/` (later).
+  `crates/bring-uniffi`; Android client in `android/` (the app itself comes later).
 
 ## Running the Ring
 
@@ -47,4 +47,23 @@ pairing_ttl_secs = 300
 cargo test --workspace
 # Manual smoke test of the real binary (shows a desktop notification):
 cargo test -p bringd --test smoke -- --ignored --nocapture
+```
+
+## Android native library
+
+Target devices are all `arm64-v8a`. One-time setup (Android command-line
+tools in `~/Android/Sdk`, or set `ANDROID_HOME`):
+
+```sh
+sdkmanager "ndk;30.0.16248370" "platforms;android-36" "platform-tools"
+rustup target add aarch64-linux-android
+cargo install cargo-ndk --locked
+```
+
+Then build the `.so` and its Kotlin bindings (both generated, gitignored):
+
+```sh
+android/build-rust.sh            # --debug for an unoptimized build
+# -> android/app/src/main/jniLibs/arm64-v8a/libbring_uniffi.so
+# -> android/app/src/generated/kotlin/io/github/hipotures/bring/ffi/
 ```
