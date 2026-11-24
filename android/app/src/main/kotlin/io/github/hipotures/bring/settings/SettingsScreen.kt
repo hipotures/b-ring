@@ -38,6 +38,7 @@ import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.storage.StorageAccess
+import io.github.hipotures.bring.versionLine
 import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.KeyValue
@@ -200,6 +201,8 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             )
             SharpButton("Forget Ring", danger = true, onClick = { confirmForget = true })
         }
+
+        Text(versionLine(context), style = MetaStyle, color = BringTheme.colors.dim)
     }
 
     if (confirmForget) {

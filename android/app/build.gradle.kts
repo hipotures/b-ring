@@ -6,6 +6,14 @@ plugins {
 // The Cargo workspace this Gradle project lives in.
 val repoRoot: File = rootDir.parentFile
 
+// Commit the APK was built from, so builds can be told apart on a device
+// ("0.1.0+8debb6f", "-dirty" for uncommitted changes).
+val gitRevision: String = providers.exec {
+    workingDir = repoRoot
+    commandLine("git", "describe", "--always", "--dirty", "--abbrev=7")
+    isIgnoreExitValue = true
+}.standardOutput.asText.get().trim().ifEmpty { "unknown" }
+
 android {
     namespace = "io.github.hipotures.bring"
     // Current AndroidX/OkHttp releases require compiling against API 37.1+;
@@ -23,7 +31,7 @@ android {
         minSdk = 30
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0+$gitRevision"
 
         // Target devices (phone, Meta Quest 3) are all arm64-v8a.
         ndk { abiFilters += "arm64-v8a" }

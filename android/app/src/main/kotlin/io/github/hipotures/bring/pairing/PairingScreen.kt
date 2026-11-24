@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,8 +38,10 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.isValidPairingCode
+import io.github.hipotures.bring.versionLine
 import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.ErrorLine
+import io.github.hipotures.bring.ui.MetaStyle
 import io.github.hipotures.bring.ui.Mono
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.Sharp
@@ -145,6 +148,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                 )
             }
         }
+        Text(versionLine(LocalContext.current), style = MetaStyle, color = BringTheme.colors.dim)
     }
 }
 
