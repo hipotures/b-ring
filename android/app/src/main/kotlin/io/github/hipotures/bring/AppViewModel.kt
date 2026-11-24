@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** What the status bar shows about sync. */
 data class SyncUi(
@@ -35,8 +36,6 @@ data class SyncUi(
     val path: String? = null,
     val sent: Long = 0,
     val total: Long = 0,
-    /** Outcome of the last manual round. */
-    val lastError: String? = null,
 )
 
 /** App-wide state: pairing, route, sync, storage and watched folders. */
@@ -70,10 +69,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A one-line result of the last user action (errors included). */
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    val sync: StateFlow<SyncUi> = wm.getWorkInfosByTagFlow(SyncScheduler.TAG)
+    private val workInfos = wm.getWorkInfosByTagFlow(SyncScheduler.TAG)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val sync: StateFlow<SyncUi> = workInfos
         .map(::syncUi)
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUi())
+
+    private val _syncError = MutableStateFlow<String?>(null)
+    /** Error of the last round that ended while the app watched, if it failed. */
+    val syncError: StateFlow<String?> = _syncError.asStateFlow()
 
     /** Bumped when a sync round ends, so lists reload. */
     val syncFinished = MutableStateFlow(0)
@@ -94,13 +100,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             networkChanged.debounce(1_000).collect { probeRoute() }
         }
-        viewModelScope.launch {
-            var wasRunning = false
-            sync.collect {
-                if (wasRunning && !it.running) syncFinished.value++
-                wasRunning = it.running
-            }
-        }
+        viewModelScope.launch { trackRounds() }
         viewModelScope.launch { syncFinished.collect { loadEntries() } }
     }
 
@@ -165,8 +165,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun syncNow() {
-        _message.value = null
+        _syncError.value = null
         SyncScheduler.syncNow(getApplication())
+    }
+
+    /**
+     * Detects the end of each round from state transitions seen in this
+     * session: a one-time request reaching a final state, or the periodic
+     * request going from RUNNING back to ENQUEUED. Old finished requests
+     * still in WorkManager's history are ignored.
+     */
+    private suspend fun trackRounds() {
+        val active = mutableSetOf<UUID>()
+        val running = mutableSetOf<UUID>()
+        workInfos.collect { infos ->
+            var ended = false
+            for (i in infos) {
+                when {
+                    i.state == WorkInfo.State.RUNNING -> {
+                        active += i.id
+                        running += i.id
+                    }
+                    i.state.isFinished -> if (active.remove(i.id)) {
+                        running.remove(i.id)
+                        ended = true
+                        _syncError.value = i.outputData.getString(SyncWorker.KEY_ERROR)
+                    }
+                    else -> {
+                        if (running.remove(i.id)) ended = true
+                        active += i.id
+                    }
+                }
+            }
+            if (ended) syncFinished.value++
+        }
     }
 
     fun cancelSync() {
@@ -226,15 +258,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun syncUi(infos: List<WorkInfo>): SyncUi {
         val running = infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
-        val manual = infos.filter { it.tags.contains(SyncScheduler.TAG) && it.state.isFinished }
-            .lastOrNull { it.outputData.keyValueMap.isNotEmpty() }
         val p = running?.progress
         return SyncUi(
             running = running != null,
             path = p?.getString(SyncWorker.KEY_PATH),
             sent = p?.getLong(SyncWorker.KEY_SENT, 0) ?: 0,
             total = p?.getLong(SyncWorker.KEY_TOTAL, 0) ?: 0,
-            lastError = manual?.outputData?.getString(SyncWorker.KEY_ERROR),
         )
     }
 }

@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +70,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     var offload by remember { mutableStateOf(context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)) }
     var customDir by rememberSaveable { mutableStateOf("") }
     var confirmForget by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) { onDispose { vm.clearMessage() } }
 
     Column(
         Modifier

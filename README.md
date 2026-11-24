@@ -6,7 +6,7 @@ truth.
 
 - Design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Workspace: `crates/bring-core`, `crates/bringd`, `crates/bring-cli` (`bring`),
-  `crates/bring-uniffi`; Android client in `android/` (the app itself comes later).
+  `crates/bring-uniffi`; Android client in `android/`.
 
 ## Running the Ring
 
@@ -49,21 +49,30 @@ cargo test --workspace
 cargo test -p bringd --test smoke -- --ignored --nocapture
 ```
 
-## Android native library
+## Android app
 
 Target devices are all `arm64-v8a`. One-time setup (Android command-line
-tools in `~/Android/Sdk`, or set `ANDROID_HOME`):
+tools in `~/Android/Sdk`, or set `ANDROID_HOME` / `android/local.properties`):
 
 ```sh
-sdkmanager "ndk;30.0.16248370" "platforms;android-36" "platform-tools"
+sdkmanager "ndk;30.0.16248370" "platforms;android-37.2" "build-tools;37.0.0" "platform-tools"
 rustup target add aarch64-linux-android
 cargo install cargo-ndk --locked
 ```
 
-Then build the `.so` and its Kotlin bindings (both generated, gitignored):
+Build, test and install (Gradle builds the Rust engine through
+`android/build-rust.sh` first):
 
 ```sh
-android/build-rust.sh            # --debug for an unoptimized build
-# -> android/app/src/main/jniLibs/arm64-v8a/libbring_uniffi.so
-# -> android/app/src/generated/kotlin/io/github/hipotures/bring/ffi/
+cd android
+./gradlew testDebugUnitTest assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`android/build-rust.sh` can also be run on its own (`--debug` for an
+unoptimized build). Its outputs are generated and gitignored:
+`app/src/main/jniLibs/arm64-v8a/libbring_uniffi.so` and the Kotlin bindings
+in `app/src/generated/kotlin/`.
+
+First run: pair with `bring pair` (scan the QR code or type the code), then
+grant all-files access and pick the folders to back up in Settings.

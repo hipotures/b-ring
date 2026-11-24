@@ -69,6 +69,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel) {
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
+    val syncError by vm.syncError.collectAsStateWithLifecycle()
 
     BackHandler(enabled = screen != Screen.HOME || dir.isNotEmpty()) {
         when {
@@ -97,7 +98,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel) {
                     },
                     header = {
                         Column {
-                            sync.lastError?.let { ErrorLine(it) }
+                            syncError?.let { ErrorLine(it) }
                             SetupPanel(storage, folders.size, onOpenSettings = { screen = Screen.SETTINGS })
                         }
                     },

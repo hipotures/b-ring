@@ -589,13 +589,18 @@ Each step has a gate: its tests must pass before the next step starts.
       generates the Kotlin bindings.
       - `android/build-rust.sh`: NDK `30.0.16248370` (pinned), `minSdk` 30
         (the first API with `MANAGE_EXTERNAL_STORAGE`), compile SDK
-        `android-36`.
+        `android-37.2` (current AndroidX and OkHttp require 37.1 or newer),
+        `targetSdk` 36.
       - `uniffi-bindgen` is a binary in `bring-uniffi` behind the `bindgen`
         feature, so it always matches the crate's `uniffi` version. It runs
         in library mode on the shipped `.so`.
       - Kotlin package `io.github.hipotures.bring.ffi`
-        (`crates/bring-uniffi/uniffi.toml`). The generated bindings need
-        JNA (`net.java.dev.jna:jna:<v>@aar`) in step 11.
+        (`crates/bring-uniffi/uniffi.toml`, with `android = true` so the
+        object cleaner is gated on `SDK_INT`). The generated bindings need
+        JNA (`net.java.dev.jna:jna:<v>@aar`).
+      - `MoonError` fields are named `detail`: UniFFI's Kotlin also emits
+        `override val message`, and a field named `message` does not
+        compile.
       - Outputs (gitignored): `android/app/src/main/jniLibs/arm64-v8a/` and
         `android/app/src/generated/kotlin/`.
 
@@ -608,6 +613,37 @@ Each step has a gate: its tests must pass before the next step starts.
     - WorkManager + Foreground Service, `MANAGE_EXTERNAL_STORAGE`.
     - Browser with thumbnails and state badges; Share Sheet → `Inbox`.
     - Media3 with the pinned `OkHttpClient`.
+
+    Implementation notes:
+    - Gradle project in `android/` (AGP 9, built-in Kotlin, Compose).
+      `preBuild` runs `build-rust.sh`. JVM unit tests load a host build of
+      `libbring_uniffi.so` through desktop JNA, so they exercise the real
+      engine.
+    - Device token: AES-GCM under an Android Keystore key, in
+      `SharedPreferences`. A paired database without a token falls back to
+      the pairing screen. Re-pairing with the same Ring keeps the index.
+    - `SyncWorker`: `select_route`, then `run_sync` as a foreground
+      `dataSync` job. Stopping it calls `cancel()`. The 15-minute periodic
+      request (`UNMETERED`) runs only on LAN; "sync now" also runs over WAN.
+      If Android refuses a foreground start from the background, the round
+      runs as a normal worker.
+    - The route is re-probed on every change of the default network.
+    - Coil gets Ring thumbnails and images through the engine's pinned
+      client. Thumbnails are content-addressed and cached on disk.
+    - Media3's OkHttp checks the pin both in its `X509TrustManager` and in
+      its `HostnameVerifier`.
+    - Share Sheet copies go to app-specific storage
+      (`Android/data/<app>/files/Inbox/<rand>/`). Copies below the offload
+      threshold stay there after upload (Phase 1 limitation).
+    - No Google Play Services: ZXing (`zxing-android-embedded`), no ML Kit.
+    - UI: technical minimalism. 2dp corners, 1dp borders, dense monospace
+      metadata, dark by default with a light theme. Square text and icon
+      badges for `LOCAL` / `SYNCED` / `REMOTE`.
+
+    *Gate:* `./gradlew testDebugUnitTest assembleDebug` is green. The tests
+    cover native bindings, pairing codes, the pin trust manager, route
+    policy, directory listing, Share Sheet file names, media types and
+    badges.
 12. **E2E on a device.**
     - A photo reaches the Ring and shows as `synced`.
     - A video over 100 MiB is offloaded, then plays with scrubbing.
