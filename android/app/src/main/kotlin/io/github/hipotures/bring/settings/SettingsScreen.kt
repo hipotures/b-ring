@@ -1,6 +1,7 @@
 package io.github.hipotures.bring.settings
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.os.Build
@@ -217,6 +218,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
 }
 
 /** POST_NOTIFICATIONS (API 33+): upload progress and the sync service. */
+@SuppressLint("InlinedApi") // the request button only shows on API 33+
 @Composable
 private fun NotificationRow() {
     val context = LocalContext.current

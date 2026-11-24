@@ -2,9 +2,9 @@ package io.github.hipotures.bring.storage
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
+import androidx.core.net.toUri
 import java.io.File
 
 /** `MANAGE_EXTERNAL_STORAGE` (§4): the engine reads watched folders by path. */
@@ -14,7 +14,7 @@ object StorageAccess {
     fun requestIntent(context: Context): Intent =
         Intent(
             Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-            Uri.parse("package:${context.packageName}"),
+            "package:${context.packageName}".toUri(),
         )
 
     /** Fallback for builds (e.g. some headsets) without the per-app screen. */

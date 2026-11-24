@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.WatchedFolder
 import io.github.hipotures.bring.storage.StorageAccess
@@ -61,6 +62,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _folders = MutableStateFlow<List<WatchedFolder>>(emptyList())
     val folders: StateFlow<List<WatchedFolder>> = _folders.asStateFlow()
 
+    private val _entries = MutableStateFlow<List<Entry>>(emptyList())
+    /** Every entry the Moon knows (local, synced and remote-only). */
+    val entries: StateFlow<List<Entry>> = _entries.asStateFlow()
+
     private val _message = MutableStateFlow<String?>(null)
     /** A one-line result of the last user action (errors included). */
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -96,6 +101,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 wasRunning = it.running
             }
         }
+        viewModelScope.launch { syncFinished.collect { loadEntries() } }
     }
 
     override fun onCleared() {
@@ -112,6 +118,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _pairing.value = Pairing.Paired(ring)
                 SyncScheduler.schedulePeriodic(getApplication())
                 loadFolders()
+                loadEntries()
                 probeRoute()
             } else {
                 _pairing.value = Pairing.Unpaired
@@ -122,13 +129,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Called on resume: the user may have granted access in Settings. */
     fun onResume() {
         _storageGranted.value = StorageAccess.granted()
-        if (_pairing.value is Pairing.Paired) networkChanged.tryEmit(Unit)
+        if (_pairing.value is Pairing.Paired) {
+            networkChanged.tryEmit(Unit)
+            loadEntries()
+        }
     }
 
     fun onPaired(ring: RingInfo) {
         _pairing.value = Pairing.Paired(ring)
         SyncScheduler.schedulePeriodic(getApplication())
-        viewModelScope.launch(Dispatchers.IO) { probeRoute() }
+        // First listing of the Ring right away, over whichever route works.
+        SyncScheduler.syncNow(getApplication())
+        probeRoute()
+    }
+
+    fun loadEntries() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (_pairing.value !is Pairing.Paired) return@launch
+            runCatching { bring.moon.entries(null) }.onSuccess { _entries.value = it }
+        }
     }
 
     private fun probeRoute() {
@@ -185,6 +204,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         bring.tokens.clear()
         bring.route.value = RouteStatus.UNKNOWN
         _folders.value = emptyList()
+        _entries.value = emptyList()
         _pairing.value = Pairing.Unpaired
         null
     }

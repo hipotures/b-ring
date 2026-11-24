@@ -2,13 +2,20 @@ package io.github.hipotures.bring
 
 import android.app.Application
 import android.content.Context
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
 import io.github.hipotures.bring.ffi.Moon
+import io.github.hipotures.bring.media.RingImageFetcher
+import io.github.hipotures.bring.media.RingImageKeyer
+import io.github.hipotures.bring.media.RingThumbFetcher
+import io.github.hipotures.bring.media.RingThumbKeyer
 import io.github.hipotures.bring.sync.Notifications
 import io.github.hipotures.bring.sync.RouteStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
-class BringApp : Application() {
+class BringApp : Application(), SingletonImageLoader.Factory {
     val prefs: Prefs by lazy { Prefs(this) }
     val tokens: TokenStore by lazy { TokenStore(this) }
 
@@ -30,6 +37,17 @@ class BringApp : Application() {
         super.onCreate()
         Notifications.createChannels(this)
     }
+
+    /** Coil: Ring thumbnails and images go through the engine's pinned client. */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .components {
+                add(RingThumbFetcher.Factory(this@BringApp) { moon })
+                add(RingThumbKeyer)
+                add(RingImageFetcher.Factory { moon })
+                add(RingImageKeyer)
+            }
+            .build()
 }
 
 val Context.bring: BringApp get() = applicationContext as BringApp

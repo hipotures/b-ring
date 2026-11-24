@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">B-Ring</string>
+    <string name="share_label">B-Ring Inbox</string>
 </resources>

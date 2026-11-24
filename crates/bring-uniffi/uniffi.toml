@@ -1,3 +1,6 @@
 [bindings.kotlin]
 package_name = "io.github.hipotures.bring.ffi"
 cdylib_name = "bring_uniffi"
+# Android-aware object cleaner: gated on SDK_INT (minSdk is 30) instead of a
+# reflective java.lang.ref.Cleaner probe, falling back to JNA's cleaner.
+android = true
