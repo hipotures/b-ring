@@ -89,6 +89,21 @@ fn synced_entry_follows_metadata_but_not_foreign_content() {
 }
 
 #[test]
+fn only_files_new_to_this_device_count_as_received() {
+    let c = db();
+    assert!(apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
+    // The same file again (e.g. its thumbnail landed): not news.
+    assert!(!apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"one", false)).unwrap());
+    // Replaced on the Ring: news.
+    assert!(apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"two!", false)).unwrap());
+    // Our own upload echoed back with its thumbnail: not news.
+    synced(&c, "DCIM/p/b.jpg", "/sd/b.jpg", b"photo", 5);
+    assert!(!apply_index_entry(&c, &remote(5, "DCIM/p/b.jpg", b"photo", false)).unwrap());
+    // Deletions are not news either.
+    assert!(!apply_index_entry(&c, &remote(1, "DCIM/a.jpg", b"", true)).unwrap());
+}
+
+#[test]
 fn pending_upload_keeps_its_path() {
     let c = db();
     store::insert_local(&c, "Inbox/a.pdf", "/sd/a.pdf", 3, 1, None).unwrap();

@@ -34,7 +34,9 @@ use crate::{Moon, Session, TransferListener, now_secs};
 /// Result of [`Moon::sync_index`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct IndexReport {
-    /// Index entries received from the Ring.
+    /// Files new to this device (or replaced on the Ring) in the delta.
+    /// Metadata-only echoes, e.g. our own upload coming back with its
+    /// thumbnail, do not count.
     pub received: u32,
     pub cursor: i64,
 }
@@ -252,13 +254,14 @@ pub(crate) fn apply_scan(
 // Delta sync
 // ---------------------------------------------------------------------------
 
-/// Applies one index entry from the Ring.
-pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<(), MoonError> {
+/// Applies one index entry from the Ring. True when it brings a file this
+/// device did not know (or new content for a remote-only one).
+pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<bool, MoonError> {
     let row = store::entry_by_ring_path(c, e.path.as_str())?;
     if e.deleted {
-        let Some(r) = row else { return Ok(()) };
+        let Some(r) = row else { return Ok(false) };
         if r.remote_file_id != Some(e.id) {
-            return Ok(());
+            return Ok(false);
         }
         match r.state {
             FileState::RemoteOnly => {
@@ -276,8 +279,12 @@ pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<(), Mo
             }
             FileState::LocalOnly => {}
         }
-        return Ok(());
+        return Ok(false);
     }
+    let news = match &row {
+        None => true,
+        Some(r) => r.state == FileState::RemoteOnly && e.blake3.is_some() && e.blake3 != r.blake3,
+    };
     match row {
         None => {
             c.execute(
@@ -319,7 +326,7 @@ pub(crate) fn apply_index_entry(c: &Connection, e: &IndexEntry) -> Result<(), Mo
             FileState::LocalOnly => {}
         },
     }
-    Ok(())
+    Ok(news)
 }
 
 // ---------------------------------------------------------------------------
@@ -361,12 +368,13 @@ impl Moon {
                 let mut db = self.db();
                 let tx = db.transaction()?;
                 for e in &page.entries {
-                    apply_index_entry(&tx, e)?;
+                    if apply_index_entry(&tx, e)? {
+                        report.received += 1;
+                    }
                 }
                 store::set_cursor(&tx, s.ring.id, page.next_since)?;
                 tx.commit()?;
             }
-            report.received += page.entries.len() as u32;
             report.cursor = page.next_since;
             if !page.has_more {
                 return Ok(report);
