@@ -113,6 +113,9 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
             openActivity.value = false
         }
     }
+    LaunchedEffect(screen) {
+        if (screen == Screen.HOME) vm.loadEntries()
+    }
 
     BackHandler(enabled = screen != Screen.HOME || dir.isNotEmpty()) {
         when {

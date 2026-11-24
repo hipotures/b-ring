@@ -419,6 +419,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         bring.moon.addWatchedFolderFor(id, localDir, null)
         val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
         if (activeRingId() == id) _folders.value = list
+        // Scan right away (fast stat-only walk, no hashing) so the new folder
+        // and its files appear on Home immediately before hashing/upload begins.
+        if (!bring.syncMutex.isLocked) {
+            runCatching { bring.moon.scanLocalFor(id) }
+            runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
+                if (activeRingId() == id) _entries.value = it
+            }
+        }
         SyncScheduler.syncNow(getApplication(), queueAfter = true, ringId = id)
         "Watching $localDir"
     }
