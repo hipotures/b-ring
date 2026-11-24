@@ -9,6 +9,7 @@ use bring_core::api::{
 
 use super::auth::AuthDevice;
 use super::{ApiError, AppState};
+use crate::notify::UploadEvent;
 use crate::uploads;
 
 async fn blocking<T: Send + 'static>(
@@ -74,10 +75,16 @@ pub async fn commit(
 ) -> Result<Json<UploadAck>, ApiError> {
     let up = state.uploads.clone();
     let _guard = up.lock(&id).await;
+    let slug = dev.slug.clone();
     let committed = blocking(move || uploads::commit(&up, &dev, &id)).await?;
     if committed.new_file {
         // Thumbnail generation (the hash is already known).
         state.hashq.enqueue(committed.ack.path.clone());
+        state.notifier.upload(UploadEvent {
+            path: committed.ack.path.to_string(),
+            device: slug,
+            size: committed.ack.size,
+        });
     }
     Ok(Json(committed.ack))
 }

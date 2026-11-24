@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header, request};
+use bring_core::ctl::{CtlEvent, CtlRequest};
 use bringd::serve::{self, Servers};
 use bringd::{Config, Ring, devices};
 use http_body_util::BodyExt;
@@ -19,6 +20,9 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tower::ServiceExt;
 
 pub struct TestRing {
@@ -35,6 +39,8 @@ pub fn test_config(dir: &std::path::Path) -> Config {
         ring_root: dir.join("ring"),
         data_dir: dir.join("data"),
         debounce_ms: 100,
+        // Never pop up desktop notifications from automated tests.
+        notifications: false,
         ..Config::default()
     }
 }
@@ -250,4 +256,44 @@ pub fn capturing_client(seen: Arc<Mutex<Option<Vec<u8>>>>) -> reqwest::Client {
         .use_preconfigured_tls(tls)
         .build()
         .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Control socket client
+// ---------------------------------------------------------------------------
+
+pub struct Ctl {
+    lines: Lines<BufReader<OwnedReadHalf>>,
+    w: OwnedWriteHalf,
+}
+
+impl Ctl {
+    pub async fn connect(path: &PathBuf) -> Self {
+        let (r, w) = UnixStream::connect(path).await.unwrap().into_split();
+        Self {
+            lines: BufReader::new(r).lines(),
+            w,
+        }
+    }
+
+    pub async fn send(&mut self, req: &CtlRequest) {
+        let mut line = serde_json::to_vec(req).unwrap();
+        line.push(b'\n');
+        self.w.write_all(&line).await.unwrap();
+    }
+
+    pub async fn recv(&mut self) -> CtlEvent {
+        let line = tokio::time::timeout(Duration::from_secs(10), self.lines.next_line())
+            .await
+            .expect("control reply timed out")
+            .unwrap()
+            .expect("control socket closed");
+        serde_json::from_str(&line).unwrap()
+    }
+
+    pub async fn request(path: &PathBuf, req: CtlRequest) -> CtlEvent {
+        let mut c = Self::connect(path).await;
+        c.send(&req).await;
+        c.recv().await
+    }
 }

@@ -26,6 +26,8 @@ pub struct Config {
     pub ctl_socket: Option<PathBuf>,
     /// Lifetime of a pairing code.
     pub pairing_ttl_secs: u64,
+    /// Desktop notifications for incoming uploads.
+    pub notifications: bool,
     /// Logical folders created on start.
     pub folders: Vec<String>,
     /// How long a path must be quiet before the watcher reports it.
@@ -45,6 +47,7 @@ impl Default for Config {
             advertise_ip: None,
             ctl_socket: None,
             pairing_ttl_secs: 300,
+            notifications: true,
             folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),

@@ -1,0 +1,28 @@
+# B-Ring daemon as a systemd *user* service.
+#
+#   cargo install --path crates/bringd --locked
+#   cargo install --path crates/bring-cli --locked
+#   install -Dm644 dist/systemd/bringd.service ~/.config/systemd/user/bringd.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bringd
+#   loginctl enable-linger "$USER"   # optional: keep running without a login
+#
+# Configuration: ~/.config/bring/bringd.toml (see README.md).
+
+[Unit]
+Description=B-Ring daemon (Ring file space for Android Moons)
+Documentation=https://github.com/hipotures/b-ring
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/bringd
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+# bringd only needs the user's own files and the network.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=default.target

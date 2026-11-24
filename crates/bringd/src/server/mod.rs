@@ -20,6 +20,7 @@ use bring_core::transfer::MAX_CHUNK_SIZE;
 use tracing::error;
 
 use crate::hasher::HashQueue;
+use crate::notify::Notifier;
 use crate::pairing::Pairing;
 use crate::store::Db;
 use crate::thumbs::ThumbStore;
@@ -37,6 +38,7 @@ pub struct AppState {
     /// Key for signed stream URLs (`meta.stream_key`).
     pub stream_key: [u8; 32],
     pub pairing: Pairing,
+    pub notifier: Notifier,
 }
 
 /// Builds the API router.

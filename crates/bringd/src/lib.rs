@@ -7,6 +7,7 @@ pub mod config;
 pub mod ctl_server;
 pub mod devices;
 pub mod hasher;
+pub mod notify;
 pub mod pairing;
 pub mod ring;
 pub mod scanner;

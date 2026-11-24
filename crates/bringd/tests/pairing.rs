@@ -22,53 +22,10 @@ use bring_core::codec::{b64_encode, hex_decode};
 use bring_core::ctl::{CtlEvent, CtlRequest};
 use bring_core::pairing::{BootstrapPayload, MoonHandshake, OneTimeToken, PairingError};
 use bringd::ctl_server;
-use common::{TestRing, capturing_client, listen, start, start_with};
+use common::{Ctl, TestRing, capturing_client, listen, start, start_with};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
 const UUID: [u8; 16] = [0x42; 16];
-
-// ---------------------------------------------------------------------------
-// Control socket client
-// ---------------------------------------------------------------------------
-
-struct Ctl {
-    lines: Lines<BufReader<OwnedReadHalf>>,
-    w: OwnedWriteHalf,
-}
-
-impl Ctl {
-    async fn connect(path: &PathBuf) -> Self {
-        let (r, w) = UnixStream::connect(path).await.unwrap().into_split();
-        Self {
-            lines: BufReader::new(r).lines(),
-            w,
-        }
-    }
-
-    async fn send(&mut self, req: &CtlRequest) {
-        let mut line = serde_json::to_vec(req).unwrap();
-        line.push(b'\n');
-        self.w.write_all(&line).await.unwrap();
-    }
-
-    async fn recv(&mut self) -> CtlEvent {
-        let line = tokio::time::timeout(Duration::from_secs(10), self.lines.next_line())
-            .await
-            .expect("control reply timed out")
-            .unwrap()
-            .expect("control socket closed");
-        serde_json::from_str(&line).unwrap()
-    }
-
-    async fn request(path: &PathBuf, req: CtlRequest) -> CtlEvent {
-        let mut c = Self::connect(path).await;
-        c.send(&req).await;
-        c.recv().await
-    }
-}
 
 async fn start_ctl(t: &TestRing) -> PathBuf {
     let path = t.config.data_dir.join("ctl.sock");

@@ -10,6 +10,7 @@ use tracing::info;
 use crate::config::Config;
 use crate::ctl_server::CtlContext;
 use crate::hasher::{self, HashQueue};
+use crate::notify::Notifier;
 use crate::pairing::{self, Pairing};
 use crate::scanner::{self, RESERVED_DIR};
 use crate::server::{self, AppState};
@@ -44,6 +45,7 @@ pub struct Ring {
     pub uploads: Uploads,
     pub tls: TlsIdentity,
     pub pairing: Pairing,
+    notifier: Notifier,
     wan_url: Option<String>,
     stream_key: [u8; 32],
     _watcher: WatcherHandle,
@@ -119,6 +121,11 @@ impl Ring {
             uploads,
             tls,
             pairing,
+            notifier: if config.notifications {
+                Notifier::spawn()
+            } else {
+                Notifier::disabled()
+            },
             wan_url: config.wan_url.clone(),
             stream_key,
             _watcher: watcher,
@@ -134,6 +141,7 @@ impl Ring {
             hashq: self.hashq.clone(),
             stream_key: self.stream_key,
             pairing: self.pairing.clone(),
+            notifier: self.notifier.clone(),
         })
     }
 
