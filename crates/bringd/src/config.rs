@@ -19,6 +19,8 @@ pub struct Config {
     pub folders: Vec<String>,
     /// How long a path must be quiet before the watcher reports it.
     pub debounce_ms: u64,
+    /// `ffmpeg` binary for video/HEIC thumbnails (optional at runtime).
+    pub ffmpeg: PathBuf,
 }
 
 impl Default for Config {
@@ -29,6 +31,7 @@ impl Default for Config {
             lan_listen: SocketAddr::from(([0, 0, 0, 0], 7443)),
             folders: vec!["DCIM".into(), "Download".into(), "Inbox".into()],
             debounce_ms: 2000,
+            ffmpeg: PathBuf::from("ffmpeg"),
         }
     }
 }
@@ -84,6 +87,10 @@ impl Config {
 
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("ring.db")
+    }
+
+    pub fn thumbs_dir(&self) -> PathBuf {
+        self.data_dir.join("thumbs")
     }
 }
 

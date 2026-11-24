@@ -11,6 +11,7 @@ use crate::hasher::{self, HashQueue};
 use crate::scanner::{self, RESERVED_DIR};
 use crate::server::{self, AppState};
 use crate::store::{self, Db};
+use crate::thumbs::ThumbStore;
 use crate::watcher::{self, WatcherHandle};
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +33,7 @@ pub struct Ring {
     pub db: Db,
     pub hashq: HashQueue,
     pub ring_id: String,
+    pub thumbs: ThumbStore,
     _watcher: WatcherHandle,
 }
 
@@ -59,7 +61,15 @@ impl Ring {
 
         let db = Db::open(&config.db_path())?;
         let ring_id = store::ring_id_hex(&db.lock())?;
-        let hashq = hasher::spawn(root.clone(), db.clone());
+        let thumbs_dir = config.thumbs_dir();
+        let thumbs =
+            ThumbStore::new(thumbs_dir.clone(), config.ffmpeg.clone()).map_err(|source| {
+                StartError::Io {
+                    path: thumbs_dir,
+                    source,
+                }
+            })?;
+        let hashq = hasher::spawn(root.clone(), db.clone(), thumbs.clone());
         // Watch first, then scan: nothing that happens in between is missed.
         let watcher = watcher::spawn(root.clone(), config.debounce(), db.clone(), hashq.clone())?;
 
@@ -76,6 +86,7 @@ impl Ring {
             db,
             hashq,
             ring_id,
+            thumbs,
             _watcher: watcher,
         })
     }
@@ -84,6 +95,7 @@ impl Ring {
         server::router(AppState {
             db: self.db.clone(),
             ring_id: self.ring_id.clone(),
+            thumbs: self.thumbs.clone(),
         })
     }
 }

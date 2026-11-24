@@ -9,6 +9,7 @@ pub mod ring;
 pub mod scanner;
 pub mod server;
 pub mod store;
+pub mod thumbs;
 pub mod watcher;
 
 pub use config::Config;

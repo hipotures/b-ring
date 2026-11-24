@@ -2,6 +2,7 @@
 
 mod health;
 mod index;
+mod thumbs;
 
 use axum::Json;
 use axum::Router;
@@ -12,6 +13,7 @@ use bring_core::api::{ErrorBody, ErrorCode};
 use tracing::error;
 
 use crate::store::Db;
+use crate::thumbs::ThumbStore;
 
 /// State shared by all handlers.
 #[derive(Clone)]
@@ -19,6 +21,7 @@ pub struct AppState {
     pub db: Db,
     /// Hex-encoded Ring identity.
     pub ring_id: String,
+    pub thumbs: ThumbStore,
 }
 
 /// Builds the API router.
@@ -26,6 +29,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/health", get(health::health))
         .route("/api/v1/index", get(index::index))
+        .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))
         .with_state(state)
 }
 

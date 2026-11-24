@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 bring-core.workspace = true
+image.workspace = true
 mime_guess.workspace = true
 notify-debouncer-full.workspace = true
 rusqlite.workspace = true
@@ -32,6 +33,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
+image.workspace = true
 tempfile.workspace = true
 tower.workspace = true
 

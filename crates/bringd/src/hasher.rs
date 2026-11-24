@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::store::{self, Db, DiskStat};
+use crate::thumbs::{self, ThumbStore};
 
 /// Handle for enqueueing paths.
 #[derive(Clone)]
@@ -34,7 +35,7 @@ impl HashQueue {
 }
 
 /// Starts the worker task.
-pub fn spawn(root: PathBuf, db: Db) -> HashQueue {
+pub fn spawn(root: PathBuf, db: Db, thumbs: ThumbStore) -> HashQueue {
     let (tx, mut rx) = mpsc::unbounded_channel::<RelPath>();
     tokio::spawn(async move {
         while let Some(first) = rx.recv().await {
@@ -46,8 +47,9 @@ pub fn spawn(root: PathBuf, db: Db) -> HashQueue {
             let mut seen = HashSet::new();
             batch.retain(|p| seen.insert(p.clone()));
             for path in batch {
-                let (root, db) = (root.clone(), db.clone());
-                let res = tokio::task::spawn_blocking(move || process(&root, &db, &path)).await;
+                let (root, db, thumbs) = (root.clone(), db.clone(), thumbs.clone());
+                let res =
+                    tokio::task::spawn_blocking(move || process(&root, &db, &thumbs, &path)).await;
                 match res {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => warn!(error = %e, "hashing failed"),
@@ -67,24 +69,44 @@ enum HashError {
     Db(#[from] bring_core::db::DbError),
 }
 
-fn process(root: &std::path::Path, db: &Db, path: &RelPath) -> Result<(), HashError> {
+fn process(
+    root: &std::path::Path,
+    db: &Db,
+    thumbs: &ThumbStore,
+    path: &RelPath,
+) -> Result<(), HashError> {
     let fs_path = path.to_fs_path(root);
     let before = match std::fs::symlink_metadata(&fs_path) {
         Ok(m) if m.is_file() => DiskStat::of(&m),
         _ => return Ok(()), // gone or not a file; the watcher handles it
     };
-    match store::file_by_path(&db.lock(), path)? {
-        Some(row) if !row.deleted && row.stat() == before && row.blake3.is_none() => {}
-        _ => return Ok(()), // not indexed yet, outdated, or already hashed
-    }
+    let row = match store::file_by_path(&db.lock(), path)? {
+        Some(row) if !row.deleted && row.stat() == before => row,
+        _ => return Ok(()), // not indexed yet, or the row is outdated
+    };
+    let thumbable = thumbs::is_thumbable(row.mime.as_deref());
 
-    let (hash, n) = hash_file(&fs_path)?;
-    let after = DiskStat::of(&std::fs::symlink_metadata(&fs_path)?);
-    if after != before || n != before.size {
-        debug!(%path, "file changed while hashing; waiting for the next event");
-        return Ok(());
-    }
-    store::set_hash(&db.lock(), path, before, hash, None)?;
-    debug!(%path, %hash, "hashed");
+    let hash = match row.blake3 {
+        None => {
+            let (hash, n) = hash_file(&fs_path)?;
+            let after = DiskStat::of(&std::fs::symlink_metadata(&fs_path)?);
+            if after != before || n != before.size {
+                debug!(%path, "file changed while hashing; waiting for the next event");
+                return Ok(());
+            }
+            hash
+        }
+        // Hash known (e.g. a committed upload) but no thumbnail yet.
+        Some(hash) if row.thumb.is_none() && thumbable => hash,
+        Some(_) => return Ok(()),
+    };
+    let thumb = if thumbable {
+        thumbs.generate(&fs_path, row.mime.as_deref())
+    } else {
+        None
+    };
+    // `set_hash` re-checks that the row still describes the hashed version.
+    store::set_hash(&db.lock(), path, before, hash, thumb)?;
+    debug!(%path, %hash, thumb = thumb.is_some(), "indexed");
     Ok(())
 }
