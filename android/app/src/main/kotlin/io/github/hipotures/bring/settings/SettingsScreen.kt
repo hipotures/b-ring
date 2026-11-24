@@ -7,9 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -40,8 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -51,7 +47,6 @@ import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.storage.StorageAccess
-import io.github.hipotures.bring.sync.RouteStatus
 import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.FolderGlyph
@@ -89,11 +84,9 @@ fun SettingsScreen(
     rings: List<RingInfo>,
     ring: RingInfo,
     vm: AppViewModel,
-    onAddRing: () -> Unit,
 ) {
     val context = LocalContext.current
     val route by vm.route.collectAsStateWithLifecycle()
-    val routes by vm.routes.collectAsStateWithLifecycle()
     val sync by vm.sync.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
@@ -121,52 +114,6 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
     ) {
         message?.let { ErrorLine(it) }
-
-        Panel(
-            title = "Rings",
-            trailing = { StatusPlate("${rings.size} paired", PlateMark.ACTIVE, small = true) },
-        ) {
-            Group {
-                rings.forEachIndexed { i, r ->
-                    if (i > 0) RowDivider()
-                    val selected = r.ringId == ring.ringId
-                    val st = routes[r.ringId] ?: RouteStatus.UNKNOWN
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(if (selected) Tm.colors.selectBg else Tm.colors.surface)
-                            .clickable { vm.selectRing(r.ringId) }
-                            .padding(horizontal = TmDimens.cellPadX, vertical = TmDimens.space2),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                r.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                color = Tm.colors.text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                r.lanUrl,
-                                style = Tm.text.code,
-                                color = Tm.colors.text2,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        RoutePlate(st)
-                    }
-                }
-            }
-            SharpButton(
-                "+ Pair another Ring",
-                onClick = onAddRing,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
 
         Panel(
             title = if (multiRing) "Ring · ${ring.name}" else "Ring",

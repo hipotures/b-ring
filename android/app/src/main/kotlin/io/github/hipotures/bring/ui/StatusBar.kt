@@ -55,8 +55,9 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Horizontal switcher for paired Rings (shown when 2+ Rings are paired):
- * each chip shows the Ring's custom name and live route dot.
+ * Horizontal switcher for paired Rings (used on both Home and Settings):
+ * each chip shows the Ring's custom name and live route dot; when [onAddRing]
+ * is provided, a matching "+ Add Ring" chip follows at the end.
  */
 @Composable
 fun RingSwitcher(
@@ -64,6 +65,7 @@ fun RingSwitcher(
     activeRingId: String,
     routes: Map<String, RouteStatus>,
     onSelect: (String) -> Unit,
+    onAddRing: (() -> Unit)? = null,
 ) {
     val c = Tm.colors
     Column(Modifier.fillMaxWidth().background(c.chrome)) {
@@ -99,6 +101,24 @@ fun RingSwitcher(
                         color = c.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (onAddRing != null) {
+                Row(
+                    Modifier
+                        .border(TmDimens.bw2, c.line2, ControlShape)
+                        .background(c.surface, ControlShape)
+                        .clickable(onClick = onAddRing)
+                        .heightIn(min = TmDimens.controlSm)
+                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "+ Add Ring",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.link,
+                        maxLines = 1,
                     )
                 }
             }

@@ -138,10 +138,15 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     multiRing = multiRing,
                 )
                 if (multiRing) {
-                    RingSwitcher(p.rings, p.activeRingId, routes) { id ->
-                        vm.selectRing(id)
-                        dir = ""
-                    }
+                    RingSwitcher(
+                        rings = p.rings,
+                        activeRingId = p.activeRingId,
+                        routes = routes,
+                        onSelect = { id ->
+                            vm.selectRing(id)
+                            dir = ""
+                        },
+                    )
                 }
                 BrowserScreen(
                     entries = entries,
@@ -175,11 +180,20 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
             }
             Screen.SETTINGS -> {
                 TopStrip("Settings", route, sync, onBack = { screen = Screen.HOME })
+                RingSwitcher(
+                    rings = p.rings,
+                    activeRingId = p.activeRingId,
+                    routes = routes,
+                    onSelect = { id ->
+                        vm.selectRing(id)
+                        dir = ""
+                    },
+                    onAddRing = { screen = Screen.ADD_RING },
+                )
                 SettingsScreen(
                     rings = p.rings,
                     ring = active,
                     vm = vm,
-                    onAddRing = { screen = Screen.ADD_RING },
                 )
             }
             Screen.ADD_RING -> {

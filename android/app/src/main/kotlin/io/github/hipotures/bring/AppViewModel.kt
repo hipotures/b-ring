@@ -144,9 +144,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch { trackRounds() }
         viewModelScope.launch { syncFinished.collect { loadEntries() } }
-        // During a long round, reload the list as uploads move on (at most
-        // every 1.5 s, without dropping the last transition), so files turn
-        // SYNCED/REMOTE and pick up thumbnails without waiting for the end.
+        // Reload once a round starts (so newly scanned local files appear while
+        // large files are still hashing) and as uploads move from file to file.
+        viewModelScope.launch {
+            sync.map { it.running }.distinctUntilChanged().collect { running ->
+                if (running) {
+                    delay(1_000)
+                    loadEntries()
+                }
+            }
+        }
         viewModelScope.launch {
             sync.map { it.path }.distinctUntilChanged().conflate().collect { path ->
                 if (path != null) {
@@ -412,6 +419,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         bring.moon.addWatchedFolderFor(id, localDir, null)
         val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
         if (activeRingId() == id) _folders.value = list
+        SyncScheduler.syncNow(getApplication(), queueAfter = true, ringId = id)
         "Watching $localDir"
     }
 
