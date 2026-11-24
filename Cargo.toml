@@ -14,6 +14,18 @@ publish = false
 bring-core = { path = "crates/bring-core" }
 uniffi = "0.32.2"
 
+blake3 = "1.8.7"
+getrandom = "0.4.3"
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+unicode-normalization = "0.1.26"
+
+# dev
+proptest = "1.12.0"
+tempfile = "3.27.0"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
