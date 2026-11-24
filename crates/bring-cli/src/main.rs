@@ -11,7 +11,7 @@ use qrcode::render::unicode::Dense1x2;
 use qrcode::{Color, QrCode};
 
 #[derive(Parser)]
-#[command(name = "bring", version, about = "Control the B-Ring daemon")]
+#[command(name = "bring", version = bring_core::VERSION, about = "Control the B-Ring daemon")]
 struct Cli {
     /// Control socket of bringd.
     #[arg(long, global = true)]

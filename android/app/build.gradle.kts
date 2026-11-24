@@ -6,13 +6,21 @@ plugins {
 // The Cargo workspace this Gradle project lives in.
 val repoRoot: File = rootDir.parentFile
 
-// Commit the APK was built from, so builds can be told apart on a device
-// ("0.1.0+8debb6f", "-dirty" for uncommitted changes).
-val gitRevision: String = providers.exec {
+// Version from git, same scheme as crates/bring-core/build.rs:
+// "<major>.<minor>.<commits>+<hash>". versionCode is the commit count, so
+// every commit installs as an upgrade.
+fun git(vararg args: String): String = providers.exec {
     workingDir = repoRoot
-    commandLine("git", "describe", "--always", "--dirty", "--abbrev=7")
+    commandLine("git", *args)
     isIgnoreExitValue = true
-}.standardOutput.asText.get().trim().ifEmpty { "unknown" }
+}.standardOutput.asText.get().trim()
+
+val commitCount: Int = git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
+val commitHash: String = git("rev-parse", "--short=7", "HEAD").ifEmpty { "unknown" }
+val baseVersion: String = Regex("""(?m)^version\s*=\s*"(\d+)\.(\d+)\.""")
+    .find(repoRoot.resolve("Cargo.toml").readText())
+    ?.let { "${it.groupValues[1]}.${it.groupValues[2]}" }
+    ?: "0.1"
 
 android {
     namespace = "io.github.hipotures.bring"
@@ -30,8 +38,8 @@ android {
         // MANAGE_EXTERNAL_STORAGE exists from API 30.
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0+$gitRevision"
+        versionCode = commitCount
+        versionName = "$baseVersion.$commitCount+$commitHash"
 
         // Target devices (phone, Meta Quest 3) are all arm64-v8a.
         ndk { abiFilters += "arm64-v8a" }

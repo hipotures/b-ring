@@ -19,8 +19,9 @@ pub use model::{Blake3Hash, FileState, RelPath, RelPathError};
 /// Version of the Ring <-> Moon HTTP protocol (served under `/api/v1`).
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Version of the B-Ring crates.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Version of the B-Ring crates: `<major>.<minor>.<commits>+<hash>` from git
+/// (see `build.rs`), or the Cargo version outside a checkout.
+pub const VERSION: &str = env!("BRING_VERSION");
 
 #[cfg(test)]
 mod tests {
