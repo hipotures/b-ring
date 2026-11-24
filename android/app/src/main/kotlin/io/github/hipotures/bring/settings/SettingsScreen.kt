@@ -54,6 +54,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
@@ -118,33 +119,7 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
             SharpButton("Check again", onClick = vm::recheckRoute)
         }
 
-        Panel(
-            title = "Storage access",
-            trailing = {
-                StatusPlate(
-                    if (storage) "Granted" else "Required",
-                    if (storage) PlateMark.COMPLETE else PlateMark.WARNING,
-                    small = true,
-                )
-            },
-        ) {
-            Text(
-                "All-files access lets the engine read watched folders by path and " +
-                    "delete offloaded copies.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Tm.colors.text2,
-            )
-            if (!storage) {
-                SharpButton("Grant all-files access", primary = true, onClick = {
-                    try {
-                        context.startActivity(StorageAccess.requestIntent(context))
-                    } catch (_: ActivityNotFoundException) {
-                        context.startActivity(StorageAccess.fallbackIntent())
-                    }
-                })
-            }
-            NotificationRow()
-        }
+        PermissionsPanel(storage)
 
         Panel(title = "Watched folders") {
             if (folders.isEmpty()) {
@@ -283,22 +258,77 @@ fun SettingsScreen(ring: RingInfo, vm: AppViewModel) {
     }
 }
 
-/** POST_NOTIFICATIONS (API 33+): upload progress and the sync service. */
-@SuppressLint("InlinedApi") // the request button only shows on API 33+
+/** One permission: what it is for, and a way to grant it while it is missing. */
+private class Permission(val name: String, val purpose: String, val granted: Boolean, val grant: () -> Unit)
+
+/**
+ * Everything the app needs from Android in one panel. All granted: folded,
+ * the header says so and a tap shows the list. Anything missing: open, the
+ * missing ones in `warning` with a button to grant.
+ */
+@SuppressLint("InlinedApi") // the notification request only runs on API 33+
 @Composable
-private fun NotificationRow() {
+private fun PermissionsPanel(storage: Boolean) {
     val context = LocalContext.current
-    fun granted() = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+    fun notificationsOn() = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
-    var ok by remember { mutableStateOf(granted()) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok = it }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("Notifications", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        if (ok) {
-            Tag("On", TmTone.Success)
-        } else {
-            SharpButton("Allow", onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) })
+    var notifications by remember { mutableStateOf(notificationsOn()) }
+    // Back from the system screen: the user may have changed it there.
+    LifecycleResumeEffect(Unit) {
+        notifications = notificationsOn()
+        onPauseOrDispose {}
+    }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = it }
+    val list = listOf(
+        Permission(
+            "All-files access",
+            "Read watched folders by path and delete offloaded copies.",
+            storage,
+        ) {
+            try {
+                context.startActivity(StorageAccess.requestIntent(context))
+            } catch (_: ActivityNotFoundException) {
+                context.startActivity(StorageAccess.fallbackIntent())
+            }
+        },
+        Permission(
+            "Notifications",
+            "The blinking upload mark in the status bar while a file uploads.",
+            notifications,
+        ) { ask.launch(Manifest.permission.POST_NOTIFICATIONS) },
+    )
+    val missing = list.count { !it.granted }
+    var open by rememberSaveable(missing) { mutableStateOf(missing > 0) }
+    Panel(
+        title = "Permissions",
+        trailing = {
+            StatusPlate(
+                if (missing == 0) "All granted" else "$missing required",
+                if (missing == 0) PlateMark.COMPLETE else PlateMark.WARNING,
+                small = true,
+            )
+        },
+        expanded = open,
+        onToggle = { open = !open },
+    ) {
+        list.forEachIndexed { i, p ->
+            if (i > 0) RowDivider()
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f).padding(end = TmDimens.space2)) {
+                    Text(
+                        p.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (p.granted) Tm.colors.text else Tm.colors.warning,
+                    )
+                    Text(
+                        p.purpose,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (p.granted) Tm.colors.text2 else Tm.colors.warning,
+                    )
+                }
+                if (p.granted) Tag("Granted", TmTone.Success) else SharpButton("Grant", primary = true, onClick = p.grant)
+            }
         }
     }
 }

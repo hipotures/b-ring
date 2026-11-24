@@ -1,5 +1,9 @@
 package io.github.hipotures.bring.ui
 
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.Icons
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.Build
@@ -74,12 +78,15 @@ fun RowDivider() = HorizontalDivider(thickness = TmDimens.bw3, color = Tm.colors
 /**
  * Level 2 panel: 1 dp `line2` frame, `head2` header band with a 1 dp rule,
  * `surface` body. [trailing] holds a small status plate or a quiet action.
+ * With [onToggle] the header folds the body away (chevron at the end).
  */
 @Composable
 fun Panel(
     modifier: Modifier = Modifier,
     title: String? = null,
     trailing: @Composable RowScope.() -> Unit = {},
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = Tm.colors
@@ -94,6 +101,7 @@ fun Panel(
                 Modifier
                     .fillMaxWidth()
                     .background(c.head2)
+                    .clickable(enabled = onToggle != null) { onToggle?.invoke() }
                     .heightIn(min = TmDimens.toolbarH)
                     .padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space1),
                 verticalAlignment = Alignment.CenterVertically,
@@ -101,14 +109,24 @@ fun Panel(
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = c.text, modifier = Modifier.weight(1f))
                 trailing()
+                if (onToggle != null) {
+                    Icon(
+                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        if (expanded) "Collapse" else "Expand",
+                        Modifier.size(TmDimens.iconLg),
+                        tint = c.text2,
+                    )
+                }
             }
-            HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
+            if (expanded) HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
-        Column(
-            Modifier.padding(TmDimens.panelPad),
-            verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
-            content = content,
-        )
+        if (expanded) {
+            Column(
+                Modifier.padding(TmDimens.panelPad),
+                verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
+                content = content,
+            )
+        }
     }
 }
 
