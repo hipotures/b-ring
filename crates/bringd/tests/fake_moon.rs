@@ -414,6 +414,27 @@ fn fake_moon_full_cycle() {
     assert_eq!(verified.queued, 0, "{verified:?}");
     assert_eq!(verified.retried, 0, "{verified:?}");
 
+    // --- Device rename from Moon API and from CLI control socket ---------------
+    let renamed_ring = moon
+        .rename_device_for(st.ring_id.clone(), "Phone One".into())
+        .unwrap();
+    assert_eq!(renamed_ring.device_slug, "phone-one");
+    assert_eq!(renamed_ring.device_id.len(), 32);
+    assert_eq!(moon.ring().unwrap().unwrap().device_slug, "phone-one");
+
+    let mut ctl = Ctl::connect(&d.join("ctl.sock"));
+    ctl.send(&CtlRequest::Rename {
+        device: "phone-one".into(),
+        name: "Work Phone".into(),
+    });
+    let CtlEvent::Renamed { device } = ctl.recv() else {
+        panic!("expected Renamed event");
+    };
+    assert_eq!(
+        (device.name.as_str(), device.slug.as_str(), device.device_uuid.as_str()),
+        ("Work Phone", "work-phone", renamed_ring.device_id.as_str())
+    );
+
     // --- The pin is enforced ------------------------------------------------------
     let pinned = |pin: &[u8]| {
         rusqlite::Connection::open(d.join("moon.db"))

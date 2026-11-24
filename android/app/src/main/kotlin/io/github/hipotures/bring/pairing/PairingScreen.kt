@@ -1,6 +1,7 @@
 package io.github.hipotures.bring.pairing
 
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,9 +48,15 @@ import themechanics.compose.TmDimens
 
 @Composable
 fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel()) {
+    val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    val defaultDeviceName = remember {
+        runCatching {
+            Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+        }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: Build.MODEL ?: "moon"
+    }
     var code by rememberSaveable { mutableStateOf("") }
-    var name by rememberSaveable { mutableStateOf(Build.MODEL ?: "moon") }
+    var name by rememberSaveable { mutableStateOf(defaultDeviceName) }
     var ringLabel by rememberSaveable { mutableStateOf("") }
     val valid = remember(code) { code.isNotBlank() && isValidPairingCode(code) }
 

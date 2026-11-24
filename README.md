@@ -21,6 +21,7 @@ loginctl enable-linger "$USER"      # optional: keep running without a login
 bring status
 bring pair                          # QR code + code for manual entry
 bring devices
+bring rename <slug|id> <name>
 bring revoke <slug|id>
 ```
 

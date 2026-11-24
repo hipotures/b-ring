@@ -95,6 +95,8 @@ pub struct RingInfo {
     /// Hex SHA-256 pin of the LAN certificate (also for Media3's OkHttp).
     pub tls_cert_sha256: String,
     pub device_slug: String,
+    /// Hex-encoded 16-byte random device UUID assigned to this Moon for this Ring.
+    pub device_id: String,
     /// Per-Ring offload threshold in bytes (`None` = default 100 MiB, `u64::MAX` = Never).
     pub offload_threshold_bytes: Option<u64>,
 }
@@ -109,6 +111,7 @@ impl From<&store::RingRow> for RingInfo {
             wan_url: r.wan_url.clone(),
             tls_cert_sha256: hex_encode(&r.pin),
             device_slug: r.device_slug.clone(),
+            device_id: hex_encode(&r.device_uuid),
             offload_threshold_bytes: r.offload_threshold_bytes,
         }
     }
@@ -170,6 +173,10 @@ impl Session {
 
     pub(crate) fn post(&self, path: &str) -> RequestBuilder {
         self.http.post(self.url(path)).bearer_auth(&self.token)
+    }
+
+    pub(crate) fn patch(&self, path: &str) -> RequestBuilder {
+        self.http.patch(self.url(path)).bearer_auth(&self.token)
     }
 
     pub(crate) async fn send(&self, req: RequestBuilder) -> Result<reqwest::Response, MoonError> {
@@ -404,6 +411,18 @@ impl Moon {
     pub fn rename_ring(&self, ring_id: String, name: String) -> Result<RingInfo, MoonError> {
         let row = self.ring_row(&ring_id)?;
         let updated = store::rename_ring(&self.db(), row.id, &name)?;
+        Ok(RingInfo::from(&updated))
+    }
+
+    /// Renames this device on the Ring (`PATCH /api/v1/device`) and stores the
+    /// Ring-assigned slug locally. Existing files and watched folders stay untouched.
+    pub fn rename_device_for(&self, ring_id: String, name: String) -> Result<RingInfo, MoonError> {
+        let s = self.session_for(&ring_id)?;
+        let req = bring_core::api::RenameDeviceRequest { name };
+        let resp: bring_core::api::DeviceResponse = self
+            .rt
+            .block_on(s.json(s.patch("/device").json(&req)))?;
+        let updated = store::set_device_slug(&self.db(), s.ring.id, &resp.slug)?;
         Ok(RingInfo::from(&updated))
     }
 

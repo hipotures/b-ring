@@ -101,6 +101,8 @@ fun SettingsScreen(
     var picking by rememberSaveable { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var draftName by remember(ring.ringId, ring.name) { mutableStateOf(ring.name) }
+    var renamingDevice by remember { mutableStateOf(false) }
+    var draftDeviceName by remember(ring.ringId, ring.deviceSlug) { mutableStateOf(ring.deviceSlug) }
     var confirmForget by remember { mutableStateOf(false) }
     val multiRing = rings.size > 1
     DisposableEffect(Unit) { onDispose { vm.clearMessage() } }
@@ -117,19 +119,27 @@ fun SettingsScreen(
 
         Panel(
             title = if (multiRing) "Ring · ${ring.name}" else "Ring",
-            trailing = {
-                SharpButton("Rename", onClick = {
-                    draftName = ring.name
-                    renaming = true
-                })
-            },
         ) {
             KeyValue("Name", ring.name)
             KeyValue("Device", ring.deviceSlug)
+            KeyValue("Device ID", ring.deviceId.take(8))
             KeyValue("Ring ID", ring.ringId.take(16))
             KeyValue("LAN", ring.lanUrl)
             KeyValue("WAN", ring.wanUrl ?: "— (LAN only)")
             KeyValue("TLS pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                verticalArrangement = Arrangement.spacedBy(TmDimens.space2),
+            ) {
+                SharpButton("Rename Ring", onClick = {
+                    draftName = ring.name
+                    renaming = true
+                })
+                SharpButton("Rename device", onClick = {
+                    draftDeviceName = ring.deviceSlug
+                    renamingDevice = true
+                })
+            }
         }
 
         Panel(title = "Connection", trailing = { RoutePlate(route) }) {
@@ -334,6 +344,49 @@ fun SettingsScreen(
                 })
             },
             dismissButton = { SharpButton("Cancel", onClick = { renaming = false }) },
+        )
+    }
+
+    if (renamingDevice) {
+        AlertDialog(
+            onDismissRequest = { renamingDevice = false },
+            modifier = Modifier
+                .padding(end = TmDimens.shadowOverlay, bottom = TmDimens.shadowOverlay)
+                .tmHardShadow(Tm.colors.shadowOverlay, TmDimens.shadowOverlay)
+                .border(TmDimens.bw1, Tm.colors.line1, MaterialTheme.shapes.extraLarge),
+            containerColor = Tm.colors.surface,
+            tonalElevation = 0.dp,
+            title = { Text("Rename this device") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
+                    OutlinedTextField(
+                        value = draftDeviceName,
+                        onValueChange = { draftDeviceName = it },
+                        label = { Text("Device name on ${ring.name}") },
+                        placeholder = { Text("e.g. S23 Work, Pixel 8") },
+                        singleLine = true,
+                        colors = tmFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Updates this phone's name and slug on ${ring.name}. Already-uploaded files stay where they are.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Tm.colors.text2,
+                    )
+                }
+            },
+            confirmButton = {
+                SharpButton(
+                    "Save",
+                    primary = true,
+                    enabled = draftDeviceName.isNotBlank(),
+                    onClick = {
+                        renamingDevice = false
+                        vm.renameDevice(ring.ringId, draftDeviceName)
+                    },
+                )
+            },
+            dismissButton = { SharpButton("Cancel", onClick = { renamingDevice = false }) },
         )
     }
 

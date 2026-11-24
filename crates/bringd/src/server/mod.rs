@@ -1,6 +1,7 @@
 //! HTTP API (`/api/v1`).
 
 pub mod auth;
+mod device;
 mod files;
 mod health;
 mod index;
@@ -16,7 +17,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use bring_core::api::{ErrorBody, ErrorCode};
 use bring_core::transfer::MAX_CHUNK_SIZE;
 use tracing::error;
@@ -55,6 +56,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pair/{id}/confirm", post(pair::confirm))
         .route("/api/v1/pair/{id}/result", get(pair::result));
     let device = Router::new()
+        .route("/api/v1/device", patch(device::rename))
         .route("/api/v1/index", get(index::index))
         .route("/api/v1/rescan", post(index::rescan))
         .route("/api/v1/thumbs/{hash}", get(thumbs::thumb))

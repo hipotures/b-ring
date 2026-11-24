@@ -80,6 +80,7 @@ async fn send(w: &mut OwnedWriteHalf, ev: &CtlEvent) -> io::Result<()> {
 fn info(d: Device) -> DeviceInfo {
     DeviceInfo {
         id: d.id,
+        device_uuid: bring_core::codec::hex_encode(&d.device_uuid),
         name: d.name,
         slug: d.slug,
         created_at: d.created_at,
@@ -146,6 +147,34 @@ async fn handle(stream: UnixStream, ctx: CtlContext) -> io::Result<()> {
                 let d = devices::by_id(c, d.id)?.expect("exists");
                 info!(device = %d.slug, "device revoked");
                 Ok(CtlEvent::Revoked { device: info(d) })
+            })
+            .await
+        }
+        CtlRequest::Rename { device, name } => {
+            let clean = match devices::validate_name(&name) {
+                Ok(n) => n.to_owned(),
+                Err(msg) => {
+                    return send(
+                        &mut w,
+                        &CtlEvent::Error {
+                            message: msg.to_owned(),
+                        },
+                    )
+                    .await;
+                }
+            };
+            db.call(move |c| -> Result<CtlEvent, DbError> {
+                let Some(d) = devices::find(c, &device)? else {
+                    return Ok(CtlEvent::Error {
+                        message: format!("no device {device:?}"),
+                    });
+                };
+                let old_slug = d.slug.clone();
+                let updated = devices::rename(c, d.id, &clean)?.expect("exists");
+                info!(from = %old_slug, to = %updated.slug, name = %updated.name, "device renamed");
+                Ok(CtlEvent::Renamed {
+                    device: info(updated),
+                })
             })
             .await
         }

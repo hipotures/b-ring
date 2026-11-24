@@ -100,17 +100,7 @@ pub fn register(
             id
         }
         None => {
-            let base = slugify(name);
-            let mut slug = base.clone();
-            let mut n = 2;
-            while conn
-                .query_row("SELECT 1 FROM devices WHERE slug = ?1", [&slug], |_| Ok(()))
-                .optional()?
-                .is_some()
-            {
-                slug = format!("{base}-{n}");
-                n += 1;
-            }
+            let slug = unique_slug(conn, name, None)?;
             conn.execute(
                 "INSERT INTO devices (device_uuid, name, slug, token_hash, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -151,18 +141,92 @@ pub fn list(conn: &Connection) -> Result<Vec<Device>, DbError> {
     Ok(out)
 }
 
-/// Finds a device by numeric id or slug.
+/// Finds a device by slug, unique hex UUID prefix (at least 4 hex chars), or
+/// numeric row id.
 pub fn find(conn: &Connection, key: &str) -> Result<Option<Device>, DbError> {
-    if let Ok(id) = key.parse::<i64>() {
-        return by_id(conn, id);
-    }
-    Ok(conn
+    if let Some(d) = conn
         .query_row(
             &format!("SELECT {COLS} FROM devices WHERE slug = ?1"),
             [key],
             row,
         )
-        .optional()?)
+        .optional()?
+    {
+        return Ok(Some(d));
+    }
+    let hex = key.trim().to_ascii_lowercase();
+    if hex.len() >= 4 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLS} FROM devices WHERE lower(hex(device_uuid)) LIKE ?1"
+        ))?;
+        let mut matches: Vec<Device> = stmt
+            .query_map([format!("{hex}%")], row)?
+            .collect::<Result<_, _>>()?;
+        if matches.len() == 1 {
+            return Ok(matches.pop());
+        }
+    }
+    if let Ok(id) = key.parse::<i64>() {
+        return by_id(conn, id);
+    }
+    Ok(None)
+}
+
+/// Validates a device display name (trimmed, 1..=64 bytes, no control chars).
+pub fn validate_name(name: &str) -> Result<&str, &'static str> {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return Err("device name cannot be empty");
+    }
+    if clean.len() > bring_core::pairing::handshake::MAX_DEVICE_NAME {
+        return Err("device name is too long (max 64 bytes)");
+    }
+    if clean.chars().any(char::is_control) {
+        return Err("device name cannot contain control characters");
+    }
+    Ok(clean)
+}
+
+fn unique_slug(conn: &Connection, name: &str, exclude_id: Option<i64>) -> Result<String, DbError> {
+    let base = slugify(name);
+    let mut slug = base.clone();
+    let mut n = 2;
+    loop {
+        let taken = match exclude_id {
+            Some(id) => conn
+                .query_row(
+                    "SELECT 1 FROM devices WHERE slug = ?1 AND id != ?2",
+                    params![&slug, id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some(),
+            None => conn
+                .query_row("SELECT 1 FROM devices WHERE slug = ?1", [&slug], |_| Ok(()))
+                .optional()?
+                .is_some(),
+        };
+        if !taken {
+            return Ok(slug);
+        }
+        slug = format!("{base}-{n}");
+        n += 1;
+    }
+}
+
+/// Renames a paired device and updates its slug to a unique slug for the new
+/// name. Existing files and watched folders are unaffected; future defaults
+/// and conflict suffixes use the new slug.
+pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<Option<Device>, DbError> {
+    if by_id(conn, id)?.is_none() {
+        return Ok(None);
+    }
+    let slug = unique_slug(conn, name, Some(id))?;
+    conn.execute(
+        "UPDATE devices SET name = ?1, slug = ?2 WHERE id = ?3",
+        params![name, slug, id],
+    )?;
+    by_id(conn, id)
 }
 
 /// Revokes a device's token. Returns `false` if it was already revoked.
@@ -230,5 +294,34 @@ mod tests {
         assert_eq!(by_id(&c, d.id).unwrap().unwrap().last_seen_at, Some(1000));
         touch(&c, d.id, 1061).unwrap();
         assert_eq!(by_id(&c, d.id).unwrap().unwrap().last_seen_at, Some(1061));
+    }
+
+    #[test]
+    fn rename_updates_name_and_keeps_slug_unique() {
+        let c = open_in_memory(Role::Ring).unwrap();
+        let (a, _) = register(&c, [1; 16], "SM-S918B", 100).unwrap();
+        let (b, _) = register(&c, [2; 16], "SM-S918B", 100).unwrap();
+        assert_eq!((a.slug.as_str(), b.slug.as_str()), ("sm-s918b", "sm-s918b-2"));
+
+        // Renaming to the same slug (different case) keeps our own slug.
+        let a = rename(&c, a.id, "sm-s918b").unwrap().unwrap();
+        assert_eq!(a.slug, "sm-s918b");
+
+        // Renaming to a distinct name updates both name and slug.
+        let b = rename(&c, b.id, "S23 Work").unwrap().unwrap();
+        assert_eq!((b.name.as_str(), b.slug.as_str()), ("S23 Work", "s23-work"));
+
+        // Colliding with another device's slug appends a numeric suffix.
+        let a = rename(&c, a.id, "S23 Work").unwrap().unwrap();
+        assert_eq!(a.slug, "s23-work-2");
+
+        // Lookup works by 8-char hex UUID prefix too.
+        let short = bring_core::codec::hex_encode(&b.device_uuid)[..8].to_owned();
+        assert_eq!(find(&c, &short).unwrap().unwrap().id, b.id);
+
+        assert!(validate_name("   ").is_err());
+        assert!(validate_name("bad\nname").is_err());
+        assert!(validate_name(&"a".repeat(65)).is_err());
+        assert_eq!(validate_name("  My Phone  "), Ok("My Phone"));
     }
 }

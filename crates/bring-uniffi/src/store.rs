@@ -158,6 +158,14 @@ pub fn rename_ring(c: &Connection, ring_db_id: i64, name: &str) -> Result<RingRo
     ring_by_db_id(c, ring_db_id)?.ok_or(MoonError::NotPaired)
 }
 
+pub fn set_device_slug(c: &Connection, ring_db_id: i64, slug: &str) -> Result<RingRow, MoonError> {
+    c.execute(
+        "UPDATE rings SET device_slug = ?1 WHERE id = ?2",
+        params![slug, ring_db_id],
+    )?;
+    ring_by_db_id(c, ring_db_id)?.ok_or(MoonError::NotPaired)
+}
+
 pub fn set_ring_offload(c: &Connection, ring_db_id: i64, bytes: u64) -> Result<(), MoonError> {
     c.execute(
         "UPDATE rings SET offload_threshold_bytes = ?1 WHERE id = ?2",

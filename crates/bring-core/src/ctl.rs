@@ -23,6 +23,11 @@ pub enum CtlRequest {
     Revoke {
         device: String,
     },
+    /// Rename a device by slug or numeric id.
+    Rename {
+        device: String,
+        name: String,
+    },
     Pair,
     /// Answer to `PairSas` within a `Pair` conversation.
     PairDecision {
@@ -34,6 +39,8 @@ pub enum CtlRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub id: i64,
+    #[serde(default)]
+    pub device_uuid: String,
     pub name: String,
     pub slug: String,
     pub created_at: i64,
@@ -66,6 +73,9 @@ pub enum CtlEvent {
         devices: Vec<DeviceInfo>,
     },
     Revoked {
+        device: DeviceInfo,
+    },
+    Renamed {
         device: DeviceInfo,
     },
     /// Show this to the Moon (QR code and/or text for manual entry).

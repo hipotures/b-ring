@@ -259,6 +259,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         null
     }
 
+    fun renameDevice(ringId: String, name: String) = action {
+        val updated = bring.moon.renameDeviceFor(ringId, name)
+        val cur = _pairing.value as? Pairing.Paired
+        if (cur != null) {
+            _pairing.value = cur.copy(
+                rings = cur.rings.map { if (it.ringId == ringId) updated else it },
+            )
+        }
+        "Device renamed to ${updated.deviceSlug}"
+    }
+
     fun loadEntries(ringId: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             val id = ringId ?: activeRingId() ?: return@launch

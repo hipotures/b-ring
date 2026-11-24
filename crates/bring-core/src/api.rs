@@ -81,6 +81,19 @@ pub struct RescanResponse {
     pub queued: u32,
 }
 
+/// `PATCH /device`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenameDeviceRequest {
+    pub name: String,
+}
+
+/// Response of `PATCH /device`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceResponse {
+    pub name: String,
+    pub slug: String,
+}
+
 // ---------------------------------------------------------------------------
 // Uploads
 // ---------------------------------------------------------------------------

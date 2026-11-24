@@ -30,6 +30,8 @@ enum Command {
     Devices,
     /// Revoke a device by slug or id.
     Revoke { device: String },
+    /// Rename a device by slug or id.
+    Rename { device: String, name: String },
 }
 
 struct Conn {
@@ -95,13 +97,19 @@ fn print_devices(devices: &[DeviceInfo]) {
         return;
     }
     println!(
-        "{:<4} {:<20} {:<24} {:<14} STATE",
+        "{:<10} {:<20} {:<24} {:<14} STATE",
         "ID", "SLUG", "NAME", "LAST SEEN"
     );
     for d in devices {
+        let short_id: String = d.device_uuid.chars().take(8).collect();
+        let id_col = if short_id.is_empty() {
+            d.id.to_string()
+        } else {
+            short_id
+        };
         println!(
-            "{:<4} {:<20} {:<24} {:<14} {}",
-            d.id,
+            "{:<10} {:<20} {:<24} {:<14} {}",
+            id_col,
             d.slug,
             d.name,
             fmt_time(d.last_seen_at),
@@ -273,6 +281,16 @@ fn run(cli: Cli) -> Result<(), String> {
             match conn.recv()? {
                 CtlEvent::Revoked { device } => {
                     println!("Revoked \"{}\" ({}).", device.name, device.slug);
+                    Ok(())
+                }
+                other => Err(unexpected(other)),
+            }
+        }
+        Command::Rename { device, name } => {
+            conn.send(&CtlRequest::Rename { device, name })?;
+            match conn.recv()? {
+                CtlEvent::Renamed { device } => {
+                    println!("Renamed to \"{}\" ({}).", device.name, device.slug);
                     Ok(())
                 }
                 other => Err(unexpected(other)),
