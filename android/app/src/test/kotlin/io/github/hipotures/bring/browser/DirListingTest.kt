@@ -45,6 +45,29 @@ class DirListingTest {
         assertEquals(emptyList<DirRow<F>>(), list("DCI"))
     }
 
+    @Test fun emptyWatchedFoldersAppearAtRootAndNested() {
+        val watched = listOf("0test/sm-s918b", "DCIM/pixel-8")
+        val root = listDir(files, "", { it.path }, { it.size }, compareByDescending { it.mtime }, watched)
+        assertEquals(
+            listOf(
+                DirRow.Folder("0test", "0test", 0, 0),
+                DirRow.Folder("DCIM", "DCIM", 3, 330),
+                DirRow.Folder("Download", "Download", 1, 5),
+                DirRow.File(files[5], "dcim-not-a-child.txt"),
+                DirRow.File(files[4], "readme.txt"),
+            ),
+            root,
+        )
+        assertEquals(
+            listOf(DirRow.Folder("sm-s918b", "0test/sm-s918b", 0, 0)),
+            listDir(files, "0test", { it.path }, { it.size }, compareByDescending { it.mtime }, watched),
+        )
+        assertEquals(
+            emptyList<DirRow<F>>(),
+            listDir(files, "0test/sm-s918b", { it.path }, { it.size }, compareByDescending { it.mtime }, watched),
+        )
+    }
+
     @Test fun breadcrumbsAndParents() {
         assertEquals(listOf("a" to "a", "b" to "a/b", "c" to "a/b/c"), crumbs("a/b/c"))
         assertEquals(emptyList<Pair<String, String>>(), crumbs(""))

@@ -165,6 +165,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     uploading = sync.path.takeIf { sync.running && sync.ringId == active.ringId },
                     onFreeLocal = vm::freeLocal,
                     ringName = active.name,
+                    watchedFolders = folders.filter { it.enabled }.map { it.ringFolder },
                 )
             }
             Screen.VIEW -> {

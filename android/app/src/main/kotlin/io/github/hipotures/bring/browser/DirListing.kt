@@ -10,6 +10,9 @@ sealed interface DirRow<out T> {
  * The direct children of [dir] (`""` is the root) among [items] with
  * '/'-separated paths: subfolders first, aggregated (file count, bytes) and
  * sorted by name, then files ordered by [fileOrder].
+ *
+ * [extraFolders] lists known folder paths (e.g. watched folders) that should
+ * appear with `0` files even when no items currently exist beneath them.
  */
 fun <T> listDir(
     items: List<T>,
@@ -17,6 +20,7 @@ fun <T> listDir(
     pathOf: (T) -> String,
     sizeOf: (T) -> Long,
     fileOrder: Comparator<T>,
+    extraFolders: List<String> = emptyList(),
 ): List<DirRow<T>> {
     val prefix = if (dir.isEmpty()) "" else "${dir.trimEnd('/')}/"
     val folders = sortedMapOf<String, LongArray>(String.CASE_INSENSITIVE_ORDER)
@@ -32,6 +36,18 @@ fun <T> listDir(
             val agg = folders.getOrPut(rest.substring(0, slash)) { LongArray(2) }
             agg[0]++
             agg[1] += sizeOf(item)
+        }
+    }
+    for (folderPath in extraFolders) {
+        val clean = folderPath.trim('/')
+        if (clean.isEmpty()) continue
+        val rest = when {
+            prefix.isEmpty() -> clean
+            clean.startsWith(prefix) -> clean.substring(prefix.length)
+            else -> continue
+        }
+        if (rest.isNotEmpty()) {
+            folders.getOrPut(rest.substringBefore('/')) { LongArray(2) }
         }
     }
     return buildList {

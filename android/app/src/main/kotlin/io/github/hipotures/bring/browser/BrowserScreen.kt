@@ -91,6 +91,8 @@ fun BrowserScreen(
     onFreeLocal: (List<Entry>) -> Unit = {},
     /** Custom name of the active Ring, shown as the breadcrumb root. */
     ringName: String = "Ring",
+    /** Watched Ring folder paths (`ringFolder`) so empty watched folders stay visible. */
+    watchedFolders: List<String> = emptyList(),
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
@@ -101,8 +103,15 @@ fun BrowserScreen(
     val shown = remember(entries, filter) {
         if (filter.state == null) entries else entries.filter { it.state == filter.state }
     }
-    val rows = remember(shown, dir) {
-        listDir(shown, dir, { it.ringPath }, { it.size.toLong() }, newestFirst)
+    val rows = remember(shown, dir, filter, watchedFolders) {
+        listDir(
+            shown,
+            dir,
+            { it.ringPath },
+            { it.size.toLong() },
+            newestFirst,
+            extraFolders = if (filter == Filter.ALL) watchedFolders else emptyList(),
+        )
     }
     // Long-press starts selecting; a tap then toggles instead of opening.
     var selected by remember(dir) { mutableStateOf(emptySet<Long>()) }
@@ -137,8 +146,9 @@ fun BrowserScreen(
             item {
                 Text(
                     when {
-                        entries.isEmpty() -> "Nothing here yet. Files appear as they are synced."
                         filter.state != null -> "No ${filter.label.lowercase()} files in this folder."
+                        dir.isNotEmpty() -> "This folder is empty. Files added here will sync automatically."
+                        entries.isEmpty() -> "Nothing here yet. Files appear as they are synced."
                         else -> "No files match."
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -320,7 +330,11 @@ private fun FolderRow(row: DirRow.Folder, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TmDimens.space0_5)) {
                 Name(row.name)
-                Text("${row.files} files · ${formatBytes(row.bytes)}", style = Tm.text.numeric, color = Tm.colors.text2)
+                Text(
+                    if (row.files == 0) "0 files" else "${files(row.files)} · ${formatBytes(row.bytes)}",
+                    style = Tm.text.numeric,
+                    color = Tm.colors.text2,
+                )
             }
             Icon(
                 Icons.AutoMirrored.Outlined.KeyboardArrowRight,
