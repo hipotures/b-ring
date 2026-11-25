@@ -140,10 +140,11 @@ fun BrowserScreen(
                 sub = { f -> "${if (f.state == null) here.size else counts[f.state] ?: 0}" },
                 modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
             )
+            HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
         }
         item {
             Breadcrumbs(dir, onDir, rootLabel = ringName)
-            HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
+            RowDivider()
         }
         if (rows.isEmpty()) {
             item {
@@ -267,13 +268,16 @@ private fun SelectionBar(
     }
 }
 
+/** The Mechanics `.tm-breadcrumbs` bar on the file-list area, separate from the filter stats. */
 @Composable
 private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String = "Ring") {
+    val c = Tm.colors
     Row(
         Modifier
             .fillMaxWidth()
+            .background(c.head2)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = TmDimens.space1),
+            .padding(horizontal = TmDimens.space2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (dir.isNotEmpty()) {
@@ -281,7 +285,7 @@ private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String 
         }
         Crumb(rootLabel, current = dir.isEmpty()) { onDir("") }
         crumbs(dir).forEach { (name, path) ->
-            Text("/", style = Tm.text.code, color = Tm.colors.text3)
+            Text("/", style = Tm.text.code, color = c.line2)
             Crumb(name, current = path == dir) { onDir(path) }
         }
     }
@@ -291,12 +295,12 @@ private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String 
 private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
     Text(
         text,
-        style = MaterialTheme.typography.bodyMedium,
+        style = Tm.text.code,
         fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (current) Tm.colors.text else Tm.colors.link,
+        color = if (current) Tm.colors.text else Tm.colors.text2,
         modifier = Modifier
             .clickable(enabled = !current, onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = TmDimens.space2),
+            .padding(vertical = 12.dp, horizontal = TmDimens.space2),
     )
 }
 

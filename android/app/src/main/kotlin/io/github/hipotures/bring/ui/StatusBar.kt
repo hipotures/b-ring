@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,8 +32,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.R
@@ -45,6 +48,7 @@ import io.github.hipotures.bring.sync.SyncRound
 import io.github.hipotures.bring.sync.roundTitle
 import themechanics.compose.Tm
 import themechanics.compose.TmDimens
+import themechanics.compose.TmTone
 
 /** Route → status mark. */
 fun routeMark(route: RouteStatus): PlateMark = when (route) {
@@ -60,7 +64,7 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Horizontal switcher for paired Rings on Home: scrollable Ring chips only.
+ * The Mechanics `.tm-tabs` switcher for paired Rings on Home.
  * Everything above this bar is global (app-wide); everything below belongs to
  * the selected Ring.
  */
@@ -77,34 +81,39 @@ fun RingSwitcher(
             Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = TmDimens.space3, vertical = TmDimens.space1_5),
-            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = TmDimens.space2),
+            verticalAlignment = Alignment.Bottom,
         ) {
             rings.forEach { ring ->
                 val selected = ring.ringId == activeRingId
                 val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
-                Row(
+                Column(
                     Modifier
-                        .border(
-                            if (selected) TmDimens.bwControl else TmDimens.bw2,
-                            if (selected) c.ink else c.line2,
-                            ControlShape,
-                        )
-                        .background(if (selected) c.selectBg else c.surface, ControlShape)
-                        .clickable { onSelect(ring.ringId) }
-                        .heightIn(min = TmDimens.controlSm)
-                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
+                        .width(IntrinsicSize.Max)
+                        .clickable { onSelect(ring.ringId) },
                 ) {
-                    PlateMarkIcon(routeMark(r), 12.dp)
-                    Text(
-                        ring.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = c.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        Modifier
+                            .heightIn(min = 44.dp)
+                            .padding(horizontal = TmDimens.space3),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
+                    ) {
+                        PlateMarkIcon(routeMark(r), 10.dp)
+                        Text(
+                            ring.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected) c.text else c.text2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(if (selected) c.selectLine else Color.Transparent),
                     )
                 }
             }
@@ -114,8 +123,9 @@ fun RingSwitcher(
 }
 
 /**
- * Per-Ring header below [RingSwitcher]: route plate + local actions (Sync now,
- * Ring settings) and the tappable sync-status line for the selected Ring.
+ * Per-Ring compact bar below [RingSwitcher]: quiet metadata in normal state
+ * ("LAN · Up to date · 05:32", tappable to Sync activity), loud badge only on
+ * deviations or active uploads, plus local actions (Sync now, Ring settings).
  */
 @Composable
 fun RingBar(
@@ -134,20 +144,96 @@ fun RingBar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .padding(start = TmDimens.space3, end = TmDimens.space1),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
-            RoutePlate(route)
-            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .clickable(onClick = onActivity),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+            ) {
+                when {
+                    sync.running -> {
+                        val base = if (sync.path != null) "Uploading" else "Syncing"
+                        val label = if (multiRing && !sync.ringName.isNullOrBlank()) "$base · ${sync.ringName}" else base
+                        val detail = when {
+                            sync.path == null -> ""
+                            sync.total > 0 -> "${(sync.sent * 100 / sync.total).coerceIn(0, 100)}% · ${formatBytes(sync.bytes)}"
+                            sync.bytes > 0 -> formatBytes(sync.bytes)
+                            else -> ""
+                        }
+                        Tag(label, TmTone.Info)
+                        if (detail.isNotEmpty()) {
+                            Text(detail, style = Tm.text.numeric, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    route == RouteStatus.OFFLINE -> {
+                        Tag("Offline", TmTone.Warning)
+                        val whenText = when {
+                            lastChecked > 0 -> formatWhen(lastChecked)
+                            lastRound != null -> formatWhen(lastRound.endedAt)
+                            else -> ""
+                        }
+                        if (whenText.isNotEmpty()) {
+                            Text(whenText, style = Tm.text.numeric, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    lastRound?.error != null && lastChecked <= lastRound.endedAt -> {
+                        Tag("Failed", TmTone.Danger)
+                        Text(
+                            "${roundTitle(lastRound)} · ${formatWhen(lastRound.endedAt)}",
+                            style = Tm.text.numeric,
+                            color = c.text2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    queued > 0 -> {
+                        Tag("$queued queued", TmTone.Pending)
+                        Text(
+                            listOfNotNull(
+                                route.label.takeIf { route != RouteStatus.UNKNOWN },
+                                if (lastChecked > 0) formatWhen(lastChecked) else null,
+                            ).joinToString(" · "),
+                            style = Tm.text.numeric,
+                            color = c.text2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    else -> {
+                        val statusText = when {
+                            lastChecked > (lastRound?.endedAt ?: 0L) -> "Up to date"
+                            lastRound != null -> roundTitle(lastRound)
+                            else -> null
+                        }
+                        val whenText = when {
+                            lastChecked > (lastRound?.endedAt ?: 0L) -> formatWhen(lastChecked)
+                            lastRound != null -> formatWhen(lastRound.endedAt)
+                            else -> null
+                        }
+                        val line = listOfNotNull(
+                            route.label.takeIf { route != RouteStatus.UNKNOWN },
+                            statusText,
+                            whenText,
+                        ).joinToString(" · ")
+                        Text(
+                            line.ifEmpty { route.label },
+                            style = Tm.text.numeric,
+                            color = c.text2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
             ActionIcon(SlidersGlyph, "Ring settings", onRingSettings)
-        }
-        when {
-            sync.running -> ActiveSync(sync, multiRing, onActivity)
-            queued > 0 && lastRound?.error == null -> QueuedStatus(queued, lastChecked, onActivity)
-            lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
-            lastRound != null -> LastRound(lastRound, onActivity)
         }
         HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
     }
