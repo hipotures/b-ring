@@ -475,6 +475,14 @@ fn fake_moon_full_cycle() {
             && d.join("ring/work-phone/DCIM/Camera/VID_0001.mp4").exists(),
         "CLI rename must also move the Ring's device directory"
     );
+    // Next sync on the Moon picks up the CLI-assigned slug and rewrites its
+    // watched folders and entries automatically with zero duplicates.
+    moon.run_sync(None).unwrap();
+    assert_eq!(moon.ring().unwrap().unwrap().device_slug, "work-phone");
+    assert_eq!(
+        moon.watched_folders().unwrap()[0].ring_folder,
+        "work-phone/DCIM"
+    );
 
     // --- The pin is enforced ------------------------------------------------------
     let pinned = |pin: &[u8]| {

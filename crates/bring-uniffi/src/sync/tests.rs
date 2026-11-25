@@ -421,6 +421,35 @@ fn unwatched_local_and_held_entries_are_pruned_without_deleting_files() {
 }
 
 #[test]
+fn stale_held_entry_merges_with_renamed_remote_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("0test");
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("photo.jpg");
+    fs::write(&file, b"same-bytes").unwrap();
+    let st = local_stat(&file).unwrap().unwrap();
+    let local = file.to_str().unwrap();
+
+    let mut c = db();
+    c.execute(
+        "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state, suppressed)
+         VALUES (?1, 'sm-s918b/0test/photo.jpg', ?2, NULL, ?3, ?4, ?5, 'local-only', 1)",
+        params![RING_1, local, st.size, st.mtime_ns, hash_bytes(b"same-bytes")],
+    )
+    .unwrap();
+    apply_index_entry(&c, RING_1, &remote(20, "s23u/0test/photo.jpg", b"same-bytes", false))
+        .unwrap();
+
+    let r = apply_scan(&mut c, RING_1, &[folder(&dir, "s23u/0test")]).unwrap();
+    assert_eq!(r.gone, 1);
+    assert!(get(&c, "sm-s918b/0test/photo.jpg").is_none());
+    let merged = get(&c, "s23u/0test/photo.jpg").unwrap();
+    assert_eq!(merged.state, FileState::Synced);
+    assert_eq!(merged.local_path.as_deref(), Some(local));
+    assert!(!merged.suppressed);
+}
+
+#[test]
 fn looks_thumbable_matches_images_and_videos_only() {
     assert!(looks_thumbable(Some("video/mp4"), "a/b.mp4"));
     assert!(looks_thumbable(Some("image/jpeg"), "a/b.jpg"));

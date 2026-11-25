@@ -345,20 +345,49 @@ pub(crate) fn apply_scan(
             };
             seen.insert(file.local.clone());
             if let Some(r) = store::entry_by_local_path(&tx, ring_db_id, &file.local)? {
-                if (r.size, r.mtime_ns) == (file.stat.size, file.stat.mtime_ns) {
+                if r.state == FileState::LocalOnly
+                    && r.suppressed
+                    && r.ring_path != ring_path.as_str()
+                {
+                    // Stale Held entry left behind under an old Ring path (e.g.
+                    // after a server-side move). If the current Ring path holds
+                    // a `remote-only` entry with the same hash, merge them into
+                    // one `synced` row; otherwise drop the stale row cleanly.
+                    if let Some(rem) =
+                        store::entry_by_ring_path(&tx, ring_db_id, ring_path.as_str())?
+                        && rem.state == FileState::RemoteOnly
+                        && rem.local_path.is_none()
+                        && r.blake3.is_some()
+                        && rem.blake3 == r.blake3
+                        && (r.size, r.mtime_ns) == (file.stat.size, file.stat.mtime_ns)
+                    {
+                        tx.execute("DELETE FROM entries WHERE id = ?1", [r.id])?;
+                        tx.execute(
+                            "UPDATE entries SET state = 'synced', local_path = ?1,
+                               mtime_ns = ?2, suppressed = 0
+                             WHERE id = ?3",
+                            params![file.local, file.stat.mtime_ns, rem.id],
+                        )?;
+                        report.gone += 1;
+                        continue;
+                    }
+                    tx.execute("DELETE FROM entries WHERE id = ?1", [r.id])?;
+                    report.gone += 1;
+                } else if (r.size, r.mtime_ns) == (file.stat.size, file.stat.mtime_ns) {
+                    continue;
+                } else {
+                    report.changed += 1;
+                    // Edited locally: the new content is a new upload; a synced
+                    // file goes back to local-only and is uploaded under a
+                    // conflict name, never over the Ring copy (§5.3).
+                    tx.execute(
+                        "UPDATE entries SET state = 'local-only', size = ?1, mtime_ns = ?2,
+                           blake3 = NULL, remote_file_id = NULL, thumb_blake3 = NULL
+                         WHERE id = ?3",
+                        params![file.stat.size, file.stat.mtime_ns, r.id],
+                    )?;
                     continue;
                 }
-                report.changed += 1;
-                // Edited locally: the new content is a new upload; a synced
-                // file goes back to local-only and is uploaded under a
-                // conflict name, never over the Ring copy (§5.3).
-                tx.execute(
-                    "UPDATE entries SET state = 'local-only', size = ?1, mtime_ns = ?2,
-                       blake3 = NULL, remote_file_id = NULL, thumb_blake3 = NULL
-                     WHERE id = ?3",
-                    params![file.stat.size, file.stat.mtime_ns, r.id],
-                )?;
-                continue;
             }
             match store::entry_by_ring_path(&tx, ring_db_id, ring_path.as_str())? {
                 None => {
@@ -576,6 +605,17 @@ impl Moon {
             let page: IndexResponse = s
                 .json(s.get(&format!("/index?since={since}&limit={INDEX_MAX_LIMIT}")))
                 .await?;
+            // If this device was renamed from the Ring CLI (`bring rename`),
+            // rewrite local slug + `<old_slug>/` prefixes BEFORE applying the
+            // index delta so moved files stay cleanly synced with no duplicates.
+            if let Some(server_slug) = page.device_slug.as_deref() {
+                let mut db = self.db();
+                if let Some(cur) = store::ring_by_db_id(&db, s.ring.id)?
+                    && cur.device_slug != server_slug
+                {
+                    store::set_device_slug(&mut db, s.ring.id, &cur.device_slug, server_slug)?;
+                }
+            }
             {
                 let mut db = self.db();
                 let tx = db.transaction()?;

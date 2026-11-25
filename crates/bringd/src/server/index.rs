@@ -1,9 +1,10 @@
+use axum::extract::{Extension, Query, State};
 use axum::Json;
-use axum::extract::{Query, State};
 use bring_core::api::{INDEX_MAX_LIMIT, IndexResponse, RescanResponse};
 use serde::Deserialize;
 use tracing::info;
 
+use super::auth::AuthDevice;
 use super::{ApiError, AppState};
 use crate::{scanner, store};
 
@@ -17,6 +18,7 @@ pub struct IndexQuery {
 /// `GET /index?since=&limit=` — delta sync.
 pub async fn index(
     State(state): State<AppState>,
+    Extension(dev): Extension<AuthDevice>,
     Query(q): Query<IndexQuery>,
 ) -> Result<Json<IndexResponse>, ApiError> {
     if q.since < 0 {
@@ -32,6 +34,7 @@ pub async fn index(
         entries,
         next_since,
         has_more,
+        device_slug: Some(dev.slug),
     }))
 }
 

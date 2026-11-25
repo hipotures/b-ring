@@ -148,6 +148,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             syncFinished.collect {
                 loadEntries()
+                loadFolders()
                 reloadRings()
             }
         }

@@ -72,6 +72,10 @@ pub struct IndexResponse {
     /// Cursor for the next request (`since` if there were no entries).
     pub next_since: i64,
     pub has_more: bool,
+    /// Calling device's current slug on the Ring (lets CLI `bring rename`
+    /// propagate back to the Moon on its next sync).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_slug: Option<String>,
 }
 
 /// `POST /rescan`
