@@ -524,14 +524,7 @@ pub(crate) fn apply_index_entry(
                    blake3, thumb_blake3, state)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'remote-only')",
                 params![
-                    ring_db_id,
-                    e.path,
-                    e.id,
-                    e.size,
-                    e.mtime_ns,
-                    e.mime,
-                    e.blake3,
-                    e.thumb
+                    ring_db_id, e.path, e.id, e.size, e.mtime_ns, e.mime, e.blake3, e.thumb
                 ],
             )?;
         }
@@ -782,7 +775,10 @@ impl Moon {
                     store::record_failure(&self.db(), job.entry.id, &e.to_string(), now_secs())?;
                     // The Ring is unreachable or out of disk space: the rest
                     // would fail the same way.
-                    if matches!(e, MoonError::Network { .. } | MoonError::Server { status: 507, .. }) {
+                    if matches!(
+                        e,
+                        MoonError::Network { .. } | MoonError::Server { status: 507, .. }
+                    ) {
                         break;
                     }
                 }
@@ -811,11 +807,7 @@ impl Moon {
         !self.cancel.load(Ordering::Relaxed)
     }
 
-    fn count_missing_thumbs(
-        &self,
-        ring_db_id: i64,
-        ids: Option<&[i64]>,
-    ) -> Result<u32, MoonError> {
+    fn count_missing_thumbs(&self, ring_db_id: i64, ids: Option<&[i64]>) -> Result<u32, MoonError> {
         let db = self.db();
         let mut missing = 0u32;
         match ids {
@@ -1234,7 +1226,12 @@ impl Moon {
                          WHERE ring_id != ?1 AND local_path = ?2 AND state = 'synced'
                            AND size = ?3 AND mtime_ns = ?4
                            AND NOT EXISTS (SELECT 1 FROM outbox WHERE entry_id = entries.id)",
-                        params![s.ring.id, job.local, job.snapshot.size, job.snapshot.mtime_ns],
+                        params![
+                            s.ring.id,
+                            job.local,
+                            job.snapshot.size,
+                            job.snapshot.mtime_ns
+                        ],
                     )?;
                 }
                 tx.execute("DELETE FROM outbox WHERE entry_id = ?1", [id])?;

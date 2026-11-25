@@ -428,9 +428,8 @@ impl Moon {
     pub fn rename_device_for(&self, ring_id: String, name: String) -> Result<RingInfo, MoonError> {
         let s = self.session_for(&ring_id)?;
         let req = bring_core::api::RenameDeviceRequest { name };
-        let resp: bring_core::api::DeviceResponse = self
-            .rt
-            .block_on(s.json(s.patch("/device").json(&req)))?;
+        let resp: bring_core::api::DeviceResponse =
+            self.rt.block_on(s.json(s.patch("/device").json(&req)))?;
         let updated =
             store::set_device_slug(&mut self.db(), s.ring.id, &s.ring.device_slug, &resp.slug)?;
         Ok(RingInfo::from(&updated))

@@ -162,7 +162,10 @@ fn scan_finds_new_changed_and_deleted_files() {
     assert!(get(&c, "DCIM/pixel/.pending-123.jpg").is_none());
 
     // Unchanged: nothing to do.
-    assert_eq!(apply_scan(&mut c, RING_1, &f).unwrap(), ScanReport::default());
+    assert_eq!(
+        apply_scan(&mut c, RING_1, &f).unwrap(),
+        ScanReport::default()
+    );
 
     // b.jpg became synced; then it is edited → local-only again (§5.3).
     let b_local = dcim.join("Camera/b.jpg");
@@ -237,7 +240,12 @@ fn free_local_deletes_only_verified_synced_copies() {
         (p.to_str().unwrap().to_owned(), st)
     };
     let mut c = db();
-    let row = |c: &Connection, ring_id: i64, ring: &str, local: &str, st: LocalStat, state: &str| {
+    let row = |c: &Connection,
+               ring_id: i64,
+               ring: &str,
+               local: &str,
+               st: LocalStat,
+               state: &str| {
         c.execute(
             "INSERT INTO entries (ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, blake3, state)
              VALUES (?1, ?2, ?3, 9, ?4, ?5, ?6, ?7)",
@@ -376,11 +384,23 @@ fn unwatched_local_and_held_entries_are_pruned_without_deleting_files() {
 
     let mut c = db();
     // 1. Held entry inside a still-watched folder: MUST stay (never re-uploaded).
-    synced(&c, "Watched/phone/keep.jpg", kept_held.to_str().unwrap(), b"data", 1);
+    synced(
+        &c,
+        "Watched/phone/keep.jpg",
+        kept_held.to_str().unwrap(),
+        b"data",
+        1,
+    );
     apply_index_entry(&c, RING_1, &remote(1, "Watched/phone/keep.jpg", b"", true)).unwrap();
 
     // 2. Held entry from a removed watched folder whose server copy was deleted: MUST be pruned.
-    synced(&c, "OldFolder/phone/old.jpg", orphan_held.to_str().unwrap(), b"data", 2);
+    synced(
+        &c,
+        "OldFolder/phone/old.jpg",
+        orphan_held.to_str().unwrap(),
+        b"data",
+        2,
+    );
     apply_index_entry(&c, RING_1, &remote(2, "OldFolder/phone/old.jpg", b"", true)).unwrap();
 
     // 3. Synced entry from a removed watched folder whose server copy still exists: MUST stay.
@@ -412,9 +432,18 @@ fn unwatched_local_and_held_entries_are_pruned_without_deleting_files() {
     let r = apply_scan(&mut c, RING_1, &[folder(&watched, "Watched/phone")]).unwrap();
     assert_eq!(r.gone, 1);
 
-    assert!(get(&c, "Watched/phone/keep.jpg").is_some(), "watched Held stays");
-    assert!(get(&c, "OldFolder/phone/old.jpg").is_none(), "unwatched Held pruned");
-    assert!(get(&c, "OldFolder/phone/still_on_ring.jpg").is_some(), "still synced stays");
+    assert!(
+        get(&c, "Watched/phone/keep.jpg").is_some(),
+        "watched Held stays"
+    );
+    assert!(
+        get(&c, "OldFolder/phone/old.jpg").is_none(),
+        "unwatched Held pruned"
+    );
+    assert!(
+        get(&c, "OldFolder/phone/still_on_ring.jpg").is_some(),
+        "still synced stays"
+    );
     assert!(get(&c, "Inbox/shared.txt").is_some(), "queued share stays");
     // Auto-prune never deletes files from phone storage.
     assert!(orphan_held.exists());
@@ -437,8 +466,12 @@ fn stale_held_entry_merges_with_renamed_remote_entry() {
         params![RING_1, local, st.size, st.mtime_ns, hash_bytes(b"same-bytes")],
     )
     .unwrap();
-    apply_index_entry(&c, RING_1, &remote(20, "s23u/0test/photo.jpg", b"same-bytes", false))
-        .unwrap();
+    apply_index_entry(
+        &c,
+        RING_1,
+        &remote(20, "s23u/0test/photo.jpg", b"same-bytes", false),
+    )
+    .unwrap();
 
     let r = apply_scan(&mut c, RING_1, &[folder(&dir, "s23u/0test")]).unwrap();
     assert_eq!(r.gone, 1);
@@ -455,7 +488,10 @@ fn looks_thumbable_matches_images_and_videos_only() {
     assert!(looks_thumbable(Some("image/jpeg"), "a/b.jpg"));
     assert!(looks_thumbable(None, "a/BVR 2026-11-20.MP4"));
     assert!(!looks_thumbable(Some("image/svg+xml"), "a/icon.svg"));
-    assert!(!looks_thumbable(Some("video/vnd.dlna.mpeg-tts"), "a/prompts.ts"));
+    assert!(!looks_thumbable(
+        Some("video/vnd.dlna.mpeg-tts"),
+        "a/prompts.ts"
+    ));
     assert!(!looks_thumbable(Some("application/pdf"), "a/doc.pdf"));
     assert!(!looks_thumbable(None, "a/notes.txt"));
 }

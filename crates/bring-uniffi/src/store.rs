@@ -32,7 +32,12 @@ impl RingRow {
     }
 
     pub fn display_name(&self) -> String {
-        if let Some(n) = self.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(n) = self
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             return n.to_owned();
         }
         // Fall back to the LAN host (e.g. "192.168.1.15") so multiple unnamed Rings stay distinguishable.
@@ -179,9 +184,8 @@ pub fn set_device_slug(
         let old_prefix = format!("{old_slug}/");
         let new_prefix = format!("{new_slug}/");
         let folders: Vec<(i64, String)> = {
-            let mut stmt = tx.prepare(
-                "SELECT id, ring_folder FROM watched_folders WHERE ring_id = ?1",
-            )?;
+            let mut stmt =
+                tx.prepare("SELECT id, ring_folder FROM watched_folders WHERE ring_id = ?1")?;
             stmt.query_map([ring_db_id], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<Result<_, _>>()?
         };
@@ -497,7 +501,10 @@ mod tests {
     #[test]
     fn offload_encoding_roundtrips() {
         assert_eq!(decode_offload(None), None);
-        assert_eq!(decode_offload(Some(encode_offload(u64::MAX))), Some(u64::MAX));
+        assert_eq!(
+            decode_offload(Some(encode_offload(u64::MAX))),
+            Some(u64::MAX)
+        );
         assert_eq!(
             decode_offload(Some(encode_offload(100 * 1024 * 1024))),
             Some(100 * 1024 * 1024)
