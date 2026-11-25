@@ -639,45 +639,73 @@ impl Moon {
         apply_scan(&mut self.db(), ring_db_id, &folders)
     }
 
-    /// Hash-first (§3.5 step 0): every pending `local-only` entry gets a full
-    /// BLAKE3 and a size/mtime snapshot before anything is sent.
-    fn prepare_outbox(&self, ring_db_id: i64) -> Result<(), MoonError> {
-        let todo: Vec<EntryRow> = {
+    /// Pending `local-only` entry ids due for upload, ordered smallest &
+    /// fewest-attempts first. Hashing happens per-file right before each
+    /// upload so large newly-watched folders start sending immediately.
+    fn pending_entry_ids(&self, ring_db_id: i64, now: i64) -> Result<Vec<i64>, MoonError> {
+        let db = self.db();
+        let mut stmt = db.prepare(
+            "SELECT e.id FROM entries e
+             LEFT JOIN outbox o ON o.entry_id = e.id
+             WHERE e.ring_id = ?1
+               AND e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL
+               AND (o.entry_id IS NULL
+                    OR e.blake3 IS NULL
+                    OR o.hashed_size != e.size
+                    OR o.hashed_mtime_ns != e.mtime_ns
+                    OR o.next_try_at IS NULL
+                    OR o.next_try_at <= ?2)
+             ORDER BY COALESCE(o.attempts, 0), e.size",
+        )?;
+        let ids = stmt
+            .query_map(params![ring_db_id, now], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        Ok(ids)
+    }
+
+    /// Hash-first (§3.5 step 0) for a single entry: ensures it has an
+    /// up-to-date BLAKE3 and size/mtime snapshot in `outbox`, then returns
+    /// the ready [`Job`]. Returns `None` if the file vanished or is currently
+    /// being written.
+    fn prepare_job(&self, entry_id: i64) -> Result<Option<Job>, MoonError> {
+        let (mut entry, existing_outbox) = {
             let db = self.db();
-            let mut stmt = db.prepare(&format!(
-                "SELECT {} FROM entries e LEFT JOIN outbox o ON o.entry_id = e.id
-                 WHERE e.ring_id = ?1
-                   AND e.state = 'local-only' AND e.suppressed = 0 AND e.local_path IS NOT NULL
-                   AND (o.entry_id IS NULL OR e.blake3 IS NULL
-                        OR o.hashed_size != e.size OR o.hashed_mtime_ns != e.mtime_ns)",
-                store::ENTRY_COLS
-                    .split(", ")
-                    .map(|c| format!("e.{c}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))?;
-            stmt.query_map([ring_db_id], store::entry_from_row)?
-                .collect::<Result<_, _>>()?
+            let Some(entry) = store::entry_by_id(&db, entry_id)? else {
+                return Ok(None);
+            };
+            let outbox = store::outbox(&db, entry_id)?;
+            (entry, outbox)
         };
-        for entry in todo {
-            self.check_cancel()?;
-            let local = entry.local_path.clone().expect("filtered on local_path");
+        if entry.state != FileState::LocalOnly || entry.suppressed {
+            return Ok(None);
+        }
+        let Some(local) = entry.local_path.clone() else {
+            return Ok(None);
+        };
+        let needs_hash = match (&entry.blake3, &existing_outbox) {
+            (Some(_), Some(o)) => {
+                o.hashed_size != entry.size || o.hashed_mtime_ns != entry.mtime_ns
+            }
+            _ => true,
+        };
+        let outbox = if needs_hash {
             let path = Path::new(&local);
             let Some(before) = local_stat(path)? else {
-                continue; // gone: the next scan drops it
+                return Ok(None); // gone: the next scan drops it
             };
             let (hash, n) = hash_file(path)?;
             let after = local_stat(path)?;
             if after != Some(before) || n != before.size {
-                continue; // still being written; try next round
+                return Ok(None); // still being written; try next round
             }
-            self.db().execute(
+            let db = self.db();
+            db.execute(
                 "UPDATE entries SET blake3 = ?1, size = ?2, mtime_ns = ?3 WHERE id = ?4",
                 params![hash, before.size, before.mtime_ns, entry.id],
             )?;
             // A fresh snapshot invalidates any upload begun for older content
             // (the Ring discards abandoned uploads after 7 days).
-            self.db().execute(
+            db.execute(
                 "INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT (entry_id) DO UPDATE SET
@@ -685,46 +713,27 @@ impl Moon {
                    upload_id = NULL, attempts = 0, last_error = NULL, next_try_at = NULL",
                 params![entry.id, before.size, before.mtime_ns],
             )?;
-        }
-        Ok(())
-    }
-
-    fn due_jobs(&self, ring_db_id: i64, now: i64) -> Result<Vec<Job>, MoonError> {
-        let db = self.db();
-        let ids: Vec<i64> = {
-            let mut stmt = db.prepare(
-                "SELECT o.entry_id FROM outbox o JOIN entries e ON e.id = o.entry_id
-                 WHERE e.ring_id = ?1
-                   AND e.state = 'local-only' AND e.suppressed = 0 AND e.blake3 IS NOT NULL
-                   AND e.local_path IS NOT NULL
-                   AND o.hashed_size = e.size AND o.hashed_mtime_ns = e.mtime_ns
-                   AND (o.next_try_at IS NULL OR o.next_try_at <= ?2)
-                 ORDER BY o.attempts, e.size",
-            )?;
-            stmt.query_map(params![ring_db_id, now], |r| r.get(0))?
-                .collect::<Result<_, _>>()?
+            entry.blake3 = Some(hash);
+            entry.size = before.size;
+            entry.mtime_ns = before.mtime_ns;
+            let Some(o) = store::outbox(&db, entry.id)? else {
+                return Ok(None);
+            };
+            o
+        } else {
+            existing_outbox.expect("checked above")
         };
-        let mut jobs = Vec::with_capacity(ids.len());
-        for id in ids {
-            let (Some(entry), Some(outbox)) =
-                (store::entry_by_id(&db, id)?, store::outbox(&db, id)?)
-            else {
-                continue;
-            };
-            let snapshot = HashSnapshot {
-                blake3: entry.blake3.expect("filtered"),
-                size: outbox.hashed_size,
-                mtime_ns: outbox.hashed_mtime_ns,
-            };
-            let local = entry.local_path.clone().expect("filtered");
-            jobs.push(Job {
-                entry,
-                outbox,
-                snapshot,
-                local,
-            });
-        }
-        Ok(jobs)
+        let snapshot = HashSnapshot {
+            blake3: entry.blake3.expect("hashed above"),
+            size: outbox.hashed_size,
+            mtime_ns: outbox.hashed_mtime_ns,
+        };
+        Ok(Some(Job {
+            entry,
+            outbox,
+            snapshot,
+            local,
+        }))
     }
 
     pub(crate) async fn process_outbox_inner(
@@ -741,13 +750,15 @@ impl Moon {
         s: &Session,
         listener: Option<&Arc<dyn TransferListener>>,
     ) -> Result<(OutboxReport, Vec<i64>), MoonError> {
-        self.prepare_outbox(s.ring.id)?;
-        let jobs = self.due_jobs(s.ring.id, now_secs())?;
+        let ids = self.pending_entry_ids(s.ring.id, now_secs())?;
         let mut report = OutboxReport::default();
         let mut uploaded_ids = Vec::new();
-        for (idx, job) in jobs.iter().enumerate() {
+        for (idx, entry_id) in ids.iter().enumerate() {
             self.check_cancel()?;
-            match self.run_job(s, job, listener).await {
+            let Some(job) = self.prepare_job(*entry_id)? else {
+                continue;
+            };
+            match self.run_job(s, &job, listener).await {
                 Ok(JobOutcome { sent, decision }) => {
                     uploaded_ids.push(job.entry.id);
                     match sent {
@@ -761,7 +772,7 @@ impl Moon {
                     }
                     // Pick up thumbnails for already-committed files during a
                     // multi-file batch instead of waiting for the last gigabyte.
-                    if idx + 1 < jobs.len() {
+                    if idx + 1 < ids.len() {
                         let _ = self.sync_index_inner(s).await;
                     }
                 }
@@ -778,7 +789,8 @@ impl Moon {
             }
         }
         report.remaining = self.db().query_row(
-            "SELECT COUNT(*) FROM outbox o JOIN entries e ON e.id = o.entry_id WHERE e.ring_id = ?1",
+            "SELECT COUNT(*) FROM entries
+             WHERE ring_id = ?1 AND state = 'local-only' AND suppressed = 0 AND local_path IS NOT NULL",
             [s.ring.id],
             |r| r.get(0),
         )?;

@@ -181,7 +181,7 @@ fun RingBar(
                             }
                             sync.bytes > 0 -> "Uploading · ${formatBytes(sync.bytes)}"
                             sync.path != null -> "Uploading…"
-                            else -> "Syncing…"
+                            else -> "Checking files…"
                         }
                         text to c.text
                     }
