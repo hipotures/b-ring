@@ -2,7 +2,14 @@ package io.github.hipotures.bring.pairing
 
 import android.os.Build
 import android.provider.Settings
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +40,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
@@ -40,6 +49,7 @@ import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.isValidPairingCode
 import io.github.hipotures.bring.versionLine
 import io.github.hipotures.bring.ui.BusyBar
+import io.github.hipotures.bring.ui.InfoLine
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.PlateMark
@@ -69,6 +79,43 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
         result.contents?.let { code = groupPairingCode(it) }
     }
 
+    val channel by vm.channel.collectAsStateWithLifecycle()
+    val received by vm.received.collectAsStateWithLifecycle()
+    val canListen = remember { SoundListener.available(context) }
+    val canBluetooth = remember { BlePairingReader.available(context) }
+    var heardVia by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(received) {
+        received?.let {
+            code = groupPairingCode(it.code)
+            heardVia = it.via
+            vm.consumeReceived()
+        }
+    }
+    // Mic and radio only run while this screen is shown.
+    DisposableEffect(Unit) { onDispose { vm.stopChannel() } }
+
+    var pendingChannel by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        val action = pendingChannel
+        pendingChannel = null
+        if (grants.values.all { it }) {
+            action?.invoke()
+        } else {
+            vm.channelFailed("Permission denied. Allow it in the app's system settings, or use another method.")
+        }
+    }
+    fun withPermissions(needed: Array<String>, action: () -> Unit) {
+        val missing = needed.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            action()
+        } else {
+            pendingChannel = action
+            permissions.launch(missing.toTypedArray())
+        }
+    }
+
     LaunchedEffect(state) {
         (state as? PairState.Done)?.let {
             val ring = it.ring
@@ -90,7 +137,12 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
             buildAnnotatedString {
                 append("Run ")
                 withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("bring pair") }
-                append(" on the Ring. Scan its QR code, or type the code printed under it.")
+                append(" on the Ring. Scan its QR code, or type the code printed under it. ")
+                append("With ")
+                withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("--sound") }
+                append(" or ")
+                withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("--ble") }
+                append(" the phone can also hear the code or read it over Bluetooth.")
             },
             style = MaterialTheme.typography.bodyMedium,
             color = Tm.colors.text2,
@@ -113,23 +165,51 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         }
                     },
                 ) {
-                    SharpButton(
-                        "Scan QR code",
-                        onClick = {
-                            scanner.launch(
-                                ScanOptions()
-                                    .setCaptureActivity(QrCaptureActivity::class.java)
-                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    .setBeepEnabled(false)
-                                    .setOrientationLocked(false)
-                                    .setPrompt("Scan the QR code shown by “bring pair” on the Ring"),
+                    Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
+                        SharpButton(
+                            "Scan QR",
+                            onClick = {
+                                vm.stopChannel()
+                                scanner.launch(
+                                    ScanOptions()
+                                        .setCaptureActivity(QrCaptureActivity::class.java)
+                                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                        .setBeepEnabled(false)
+                                        .setOrientationLocked(false)
+                                        .setPrompt("Scan the QR code shown by “bring pair” on the Ring"),
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (canListen) {
+                            val on = channel is ChannelState.Listening
+                            SharpButton(
+                                if (on) "Stop" else "Listen",
+                                onClick = {
+                                    if (on) vm.stopChannel() else withPermissions(arrayOf(SoundListener.PERMISSION), vm::listen)
+                                },
+                                modifier = Modifier.weight(1f),
                             )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                        }
+                        if (canBluetooth) {
+                            val on = channel is ChannelState.Bluetooth
+                            SharpButton(
+                                if (on) "Stop" else "Bluetooth",
+                                onClick = {
+                                    if (on) vm.stopChannel() else withPermissions(BlePairingReader.permissions, vm::readBluetooth)
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    ChannelStatus(channel)
+                    if (channel == ChannelState.Idle && valid) heardVia?.let { InfoLine("Code received over $it.") }
                     OutlinedTextField(
                         value = code,
-                        onValueChange = { code = it.uppercase() },
+                        onValueChange = {
+                            code = it.uppercase()
+                            heardVia = null
+                        },
                         label = { Text("Code") },
                         placeholder = { Text("XXXXX-XXXXX-…", fontFamily = Tm.text.code.fontFamily) },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = Tm.text.code.fontFamily),
@@ -173,6 +253,46 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
             }
         }
         Text(versionLine(LocalContext.current), style = Tm.text.code, color = Tm.colors.text2)
+    }
+}
+
+@Composable
+private fun ChannelStatus(channel: ChannelState) {
+    when (channel) {
+        ChannelState.Idle -> {}
+        is ChannelState.Listening -> {
+            Text(
+                "Listening… hold the phone near the Ring's speaker.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Tm.colors.text2,
+            )
+            LevelMeter(channel.level)
+        }
+        is ChannelState.Bluetooth -> {
+            Text(channel.status, style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)
+            BusyBar()
+        }
+        is ChannelState.Failed -> ErrorLine(channel.message)
+    }
+}
+
+/** Microphone input level: square bar on a `line3` track (RMS, square-root scale). */
+@Composable
+private fun LevelMeter(level: Float) {
+    val fraction = (kotlin.math.sqrt(level.coerceAtLeast(0f)) * 2f).coerceIn(0f, 1f)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .border(TmDimens.bw3, Tm.colors.line3)
+            .background(Tm.colors.sunken),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction)
+                .fillMaxHeight()
+                .background(Tm.colors.accent),
+        )
     }
 }
 

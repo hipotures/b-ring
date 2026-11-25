@@ -385,7 +385,8 @@ the desktop. A Moon knows its own slug (from pairing), not its numeric id.
   - The QR code and the manual-entry field carry the same string. A typo is
     caught locally by the checksum, so it does not burn one of the 3 attempts.
   - `wan_url` and the certificate pin arrive later, inside `sealed`.
-  - The same payload format will be reused for ggwave and BLE in Phase 2.
+  - The same 31 bytes travel unchanged over the sound and BLE channels
+    (§3.6.1).
 - **Ring identity:** the payload does not carry `ring_id`. The Moon first calls
   `GET /health` and uses the `ring_id` it reports. A wrong `ring_id` (wrong host
   or an attacker) only makes key confirmation fail; it cannot produce a session.
@@ -407,6 +408,64 @@ the desktop. A Moon knows its own slug (from pairing), not its numeric id.
 - **Approval order:** `bring pair` waits for `y/N` on Linux. Only then does
   `/result` return `sealed` and the device is written to `devices` (with a
   unique `slug` derived from `device_name`).
+
+### 3.6.1 Pairing channels (Phase 2)
+
+A channel only delivers the bootstrap payload. The Moon turns whatever it
+received into the text code and calls the same `pair_start`, so SPAKE2, the
+SAS, the approval and `sealed` do not change. `bring pair` always shows the QR
+code and the text; `--sound` and `--ble` add channels, and a channel that
+cannot start prints a warning without stopping the others. Every channel stops
+as soon as a Moon reaches the SAS step.
+
+| Channel | Ring (`bring`) | Moon (Android) |
+| --- | --- | --- |
+| QR code | terminal QR (`qrcode`) | ZXing |
+| Text | grouped Crockford base32 | text field, live checksum |
+| Sound (`--sound`) | WAV played on repeat by `pw-play` / `paplay` / `aplay` / `ffplay` | "Listen": `AudioRecord` → `SoundReceiver` |
+| BLE (`--ble`) | BlueZ GATT peripheral over D-Bus (`zbus`) | "Bluetooth": scan, connect, read, disconnect |
+
+- **Sound** (`bring-core::pairing::acoustic`, ggwave-style, pure Rust, used by
+  both ends):
+  - 48 kHz, 4 parallel bands × 16 tones, 46.875 Hz spacing, 1875–4828 Hz.
+    The audible band is far more reliable than ultrasound on phone and laptop
+    hardware.
+  - 64 ms symbols (2 bytes each) with 5 ms raised-cosine edges. The decoder's
+    2048-sample Hann window skips the first 16 ms of each symbol, so most
+    echo of the previous symbol falls outside it.
+  - Frame: 4 preamble symbols (timing) + 25 data symbols = 1.86 s, carrying
+    RS(50, 34) over `[0xB1][payload][CRC-16/CCITT]`. It repairs up to 8 bad
+    bytes, and the CRC rejects the rare miscorrection. About 17 B/s of payload.
+  - The decoder is streaming and amplitude-independent: each band's winner
+    is judged against that band's own energy, so there is no AGC. Any
+    16–192 kHz input is resampled to 48 kHz.
+  - The CLI links no audio library. The WAV holds the token, so it is a
+    `0600` file in the `0700` runtime directory and is removed when the
+    beacon stops. `--wav FILE` saves it to play on another device.
+  - Android records from `UNPROCESSED` when the device supports it, and from
+    `VOICE_RECOGNITION` otherwise. It disables `AcousticEchoCanceler`,
+    `NoiseSuppressor` and `AutomaticGainControl` on the session.
+    It needs `RECORD_AUDIO`.
+    One-way: Linux needs no microphone, so this works on Meta Quest 3.
+- **BLE** (`bring-core::pairing::ble`):
+  - The Ring registers a GATT application (one primary service, one
+    read-only characteristic holding the 31 raw bytes, with offset reads
+    supported) and a `peripheral` advertisement (service UUID + local name
+    `B-Ring`, which fits a legacy 31-byte advert) with the first powered
+    adapter. It uses `zbus` (pure Rust), not libdbus. Dropping the beacon
+    unregisters both, and BlueZ also drops them when the process exits.
+  - No bonding: nothing appears in either OS's list of paired devices. The
+    Moon asks for MTU 64, reads the value, and disconnects.
+  - Android permissions: `BLUETOOTH_SCAN` (`neverForLocation`) and
+    `BLUETOOTH_CONNECT`. On Android 11 (API 30) it uses the legacy
+    `BLUETOOTH` / `BLUETOOTH_ADMIN` plus `ACCESS_FINE_LOCATION`, all with
+    `maxSdkVersion 30`. The microphone and BLE are optional `uses-feature`s,
+    and the app hides a channel's button when the hardware is missing.
+- **Threat model.** Anyone in earshot or radio range can learn the payload,
+  just as anyone can photograph a QR code on screen. The payload is only a
+  bootstrap: an eavesdropper who races the real Moon still needs the user to
+  approve a SAS that the user's own phone does not show. The session is also
+  single-use and has 3 attempts.
 
 ### 3.7 CLI ↔ bringd control protocol
 
@@ -451,7 +510,8 @@ connection cancels the session.
 - **QR scanning** uses plain **ZXing** (`zxing-android-embedded`), with no
   Google Play Services dependency. The pairing screen also has a text field for
   typing or pasting the same base32 payload, as a fallback for devices without a
-  usable camera (for example Meta Quest 3).
+  usable camera (for example Meta Quest 3). "Listen" and "Bluetooth" fill the
+  same field from `bring pair --sound` / `--ble` (§3.6.1).
 - **Storage access:** `MANAGE_EXTERNAL_STORAGE` (private sideloaded APK).
 
 ### 4.1 Moon sync engine (`bring-uniffi`)

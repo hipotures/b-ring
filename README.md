@@ -46,6 +46,7 @@ loginctl enable-linger "$USER"      # optional: keep running without a login
 
 bring status
 bring pair                          # QR code + code for manual entry
+bring pair --sound --ble            # …also play it as sound and offer it over Bluetooth LE
 bring devices
 bring rename <slug|id> <name>
 bring revoke <slug|id>

@@ -25,11 +25,72 @@ sealed interface PairState {
     data class Failed(val message: String) : PairState
 }
 
+/** A code channel other than the camera or the keyboard (sound, Bluetooth). */
+sealed interface ChannelState {
+    data object Idle : ChannelState
+    /** [level] is the microphone RMS in `[0, 1]`. */
+    data class Listening(val level: Float) : ChannelState
+    data class Bluetooth(val status: String) : ChannelState
+    data class Failed(val message: String) : ChannelState
+}
+
+/** A code a channel delivered, and that channel's name for the UI. */
+data class ReceivedCode(val code: String, val via: String)
+
 class PairingViewModel(app: Application) : AndroidViewModel(app) {
     private val bring = app.bring
     private val _state = MutableStateFlow<PairState>(PairState.Idle)
     val state: StateFlow<PairState> = _state.asStateFlow()
     private var job: Job? = null
+
+    private val _channel = MutableStateFlow<ChannelState>(ChannelState.Idle)
+    val channel: StateFlow<ChannelState> = _channel.asStateFlow()
+    /** A code delivered by a channel, for the screen to put into the field. */
+    private val _received = MutableStateFlow<ReceivedCode?>(null)
+    val received: StateFlow<ReceivedCode?> = _received.asStateFlow()
+    private var channelJob: Job? = null
+
+    /** Listens for `bring pair --sound` (RECORD_AUDIO must be granted). */
+    fun listen() = runChannel(ChannelState.Listening(0f), "sound") {
+        SoundListener.listen(getApplication()) { level ->
+            if (_channel.value is ChannelState.Listening) _channel.value = ChannelState.Listening(level)
+        }
+    }
+
+    /** Reads the code from `bring pair --ble` (Bluetooth permissions must be granted). */
+    fun readBluetooth() = runChannel(ChannelState.Bluetooth("Starting…"), "Bluetooth") {
+        BlePairingReader.read(getApplication()) { _channel.value = ChannelState.Bluetooth(it) }
+    }
+
+    private fun runChannel(initial: ChannelState, via: String, block: suspend () -> String) {
+        channelJob?.cancel()
+        _channel.value = initial
+        channelJob = viewModelScope.launch {
+            try {
+                _received.value = ReceivedCode(block(), via)
+                _channel.value = ChannelState.Idle
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _channel.value = ChannelState.Failed(e.message ?: e.toString())
+            }
+        }
+    }
+
+    fun stopChannel() {
+        channelJob?.cancel()
+        channelJob = null
+        _channel.value = ChannelState.Idle
+    }
+
+    fun channelFailed(message: String) {
+        stopChannel()
+        _channel.value = ChannelState.Failed(message)
+    }
+
+    fun consumeReceived() {
+        _received.value = null
+    }
 
     fun reset() {
         job?.cancel()
@@ -38,6 +99,7 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun start(code: String, deviceName: String, ringLabel: String = "") {
+        stopChannel()
         job?.cancel()
         job = viewModelScope.launch(Dispatchers.IO) {
             _state.value = PairState.Connecting
