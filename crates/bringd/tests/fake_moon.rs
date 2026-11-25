@@ -414,6 +414,29 @@ fn fake_moon_full_cycle() {
     assert_eq!(verified.queued, 0, "{verified:?}");
     assert_eq!(verified.retried, 0, "{verified:?}");
 
+    // --- Share upload into an arbitrary folder stays remote-only ---------------
+    let staged_dir = d.join("share/staged-1");
+    std::fs::create_dir_all(&staged_dir).unwrap();
+    let staged = staged_dir.join("note.txt");
+    std::fs::write(&staged, b"tiny note").unwrap();
+    let remote_share = moon
+        .enqueue_upload_remote_for(
+            st.ring_id.clone(),
+            staged.to_str().unwrap().into(),
+            "Custom/Sub/note.txt".into(),
+        )
+        .unwrap();
+    let sr = moon.run_sync(None).unwrap();
+    assert_eq!((sr.outbox.uploaded, sr.outbox.offloaded), (1, 1), "{sr:?}");
+    let after_share = moon.entry(remote_share.id).unwrap();
+    assert_eq!(after_share.state, EntryState::RemoteOnly);
+    assert_eq!(after_share.local_path, None);
+    assert!(!staged.exists(), "staged share copy must be deleted after ACK");
+    assert_eq!(
+        std::fs::read(d.join("ring/Custom/Sub/note.txt")).unwrap(),
+        b"tiny note"
+    );
+
     // --- Device rename from Moon API and from CLI control socket ---------------
     let renamed_ring = moon
         .rename_device_for(st.ring_id.clone(), "Phone One".into())
@@ -425,6 +448,15 @@ fn fake_moon_full_cycle() {
         "cumulative transfer totals must survive offload and deletion: {renamed_ring:?}"
     );
     assert_eq!(moon.ring().unwrap().unwrap().device_slug, "phone-one");
+    assert!(
+        !d.join("ring/fake-moon").exists()
+            && d.join("ring/phone-one/DCIM/Camera/VID_0001.mp4").exists(),
+        "device rename must move the Ring's top-level device directory"
+    );
+    assert_eq!(
+        moon.watched_folders().unwrap()[0].ring_folder,
+        "phone-one/DCIM"
+    );
 
     let mut ctl = Ctl::connect(&d.join("ctl.sock"));
     ctl.send(&CtlRequest::Rename {
@@ -437,6 +469,11 @@ fn fake_moon_full_cycle() {
     assert_eq!(
         (device.name.as_str(), device.slug.as_str(), device.device_uuid.as_str()),
         ("Work Phone", "work-phone", renamed_ring.device_id.as_str())
+    );
+    assert!(
+        !d.join("ring/phone-one").exists()
+            && d.join("ring/work-phone/DCIM/Camera/VID_0001.mp4").exists(),
+        "CLI rename must also move the Ring's device directory"
     );
 
     // --- The pin is enforced ------------------------------------------------------

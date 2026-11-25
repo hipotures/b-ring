@@ -35,10 +35,16 @@ class Prefs(context: Context) {
         get() = sp.getString(SELECTED_RING, null)
         set(v) = sp.edit { if (v == null) remove(SELECTED_RING) else putString(SELECTED_RING, v) }
 
+    /** Last destination folder chosen in the Share Sheet. */
+    var lastShareFolder: String?
+        get() = sp.getString(LAST_SHARE_FOLDER, null)
+        set(v) = sp.edit { if (v.isNullOrBlank()) remove(LAST_SHARE_FOLDER) else putString(LAST_SHARE_FOLDER, v) }
+
     private companion object {
         const val THEME = "theme"
         const val LEGACY_DARK = "dark_theme" // before The Mechanics
         const val OFFLOAD = "offload_threshold"
         const val SELECTED_RING = "selected_ring_id"
+        const val LAST_SHARE_FOLDER = "last_share_folder"
     }
 }

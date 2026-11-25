@@ -31,4 +31,12 @@ class ShareNamesTest {
         assertTrue(emoji.endsWith(".png"))
         assertTrue(emoji.dropLast(4).all { it.isSurrogate() } && emoji.dropLast(4).length % 2 == 0)
     }
+
+    @Test fun sanitizesDestinationFolderPaths() {
+        assertEquals("Invoices/2026", sanitizeFolderPath("  /Invoices\\2026/ "))
+        assertEquals("sm-s918b/Docs", sanitizeFolderPath("../sm-s918b/./Docs"))
+        assertEquals("Inbox", sanitizeFolderPath(""))
+        assertEquals("Inbox", sanitizeFolderPath(".../../"))
+        assertEquals("Inbox", sanitizeFolderPath(".bring/staging"))
+    }
 }

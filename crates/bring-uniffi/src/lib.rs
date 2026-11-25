@@ -324,7 +324,7 @@ impl Moon {
         ))?;
         let rows = stmt.query_map(args, |r| {
             let e = store::entry_from_row(r)?;
-            let rid: [u8; 16] = r.get(12)?;
+            let rid: [u8; 16] = r.get(13)?;
             Ok(Entry {
                 id: e.id,
                 ring_id: hex_encode(&rid),
@@ -338,8 +338,8 @@ impl Moon {
                 thumb: e.thumb.map(|h| h.to_hex()),
                 state: e.state.into(),
                 suppressed: e.suppressed,
-                upload_pending: r.get(13)?,
-                last_error: r.get(14)?,
+                upload_pending: r.get(14)?,
+                last_error: r.get(15)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -420,15 +420,17 @@ impl Moon {
         Ok(RingInfo::from(&updated))
     }
 
-    /// Renames this device on the Ring (`PATCH /api/v1/device`) and stores the
-    /// Ring-assigned slug locally. Existing files and watched folders stay untouched.
+    /// Renames this device on the Ring (`PATCH /api/v1/device`), stores the
+    /// Ring-assigned slug locally, and rewrites `<old_slug>/` prefixes in
+    /// watched folders and entries to match the renamed directory on the Ring.
     pub fn rename_device_for(&self, ring_id: String, name: String) -> Result<RingInfo, MoonError> {
         let s = self.session_for(&ring_id)?;
         let req = bring_core::api::RenameDeviceRequest { name };
         let resp: bring_core::api::DeviceResponse = self
             .rt
             .block_on(s.json(s.patch("/device").json(&req)))?;
-        let updated = store::set_device_slug(&self.db(), s.ring.id, &resp.slug)?;
+        let updated =
+            store::set_device_slug(&mut self.db(), s.ring.id, &s.ring.device_slug, &resp.slug)?;
         Ok(RingInfo::from(&updated))
     }
 
@@ -667,25 +669,25 @@ impl Moon {
 
     // --- Sync ----------------------------------------------------------------
 
-    /// Queues one file outside watched folders (Share Sheet → `Inbox`) for `ring_id`.
-    pub fn enqueue_upload_for(
+    fn enqueue_upload_inner(
         &self,
-        ring_id: String,
-        local_path: String,
-        ring_path: String,
+        ring_id: &str,
+        local_path: &str,
+        ring_path: &str,
+        offload_after_upload: bool,
     ) -> Result<Entry, MoonError> {
         let _w = self.work();
-        let ring = self.ring_row(&ring_id)?;
-        let target = RelPath::new(&ring_path)
+        let ring = self.ring_row(ring_id)?;
+        let target = RelPath::new(ring_path)
             .map_err(|e| MoonError::invalid(format!("{ring_path:?}: {e}")))?;
         if target.folder() == ".bring" {
             return Err(MoonError::invalid(".bring is reserved"));
         }
-        let stat = sync::local_stat(Path::new(&local_path))?
+        let stat = sync::local_stat(Path::new(local_path))?
             .ok_or_else(|| MoonError::invalid(format!("{local_path} is not a file")))?;
         let id = {
             let db = self.db();
-            match store::entry_by_local_path(&db, ring.id, &local_path)? {
+            match store::entry_by_local_path(&db, ring.id, local_path)? {
                 Some(e) => e.id,
                 None => {
                     let mut free = None;
@@ -696,19 +698,48 @@ impl Moon {
                         }
                     }
                     let path = free.ok_or_else(|| MoonError::invalid("no free name"))?;
-                    store::insert_local(
+                    let id = store::insert_local(
                         &db,
                         ring.id,
                         path.as_str(),
-                        &local_path,
+                        local_path,
                         stat.size,
                         stat.mtime_ns,
                         None,
-                    )?
+                    )?;
+                    if offload_after_upload {
+                        db.execute(
+                            "UPDATE entries SET offload_after_upload = 1 WHERE id = ?1",
+                            [id],
+                        )?;
+                    }
+                    id
                 }
             }
         };
         self.entry(id)
+    }
+
+    /// Queues one file outside watched folders for `ring_id`.
+    pub fn enqueue_upload_for(
+        &self,
+        ring_id: String,
+        local_path: String,
+        ring_path: String,
+    ) -> Result<Entry, MoonError> {
+        self.enqueue_upload_inner(&ring_id, &local_path, &ring_path, false)
+    }
+
+    /// Queues one file outside watched folders (e.g. Share Sheet) for `ring_id`
+    /// and deletes its staged local copy right after a verified ACK so it stays
+    /// `remote-only` on the Ring regardless of file size.
+    pub fn enqueue_upload_remote_for(
+        &self,
+        ring_id: String,
+        local_path: String,
+        ring_path: String,
+    ) -> Result<Entry, MoonError> {
+        self.enqueue_upload_inner(&ring_id, &local_path, &ring_path, true)
     }
 
     pub fn enqueue_upload(

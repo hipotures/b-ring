@@ -163,20 +163,48 @@ async fn handle(stream: UnixStream, ctx: CtlContext) -> io::Result<()> {
                     .await;
                 }
             };
-            db.call(move |c| -> Result<CtlEvent, DbError> {
-                let Some(d) = devices::find(c, &device)? else {
-                    return Ok(CtlEvent::Error {
-                        message: format!("no device {device:?}"),
-                    });
-                };
-                let old_slug = d.slug.clone();
-                let updated = devices::rename(c, d.id, &clean)?.expect("exists");
-                info!(from = %old_slug, to = %updated.slug, name = %updated.name, "device renamed");
-                Ok(CtlEvent::Renamed {
-                    device: info(updated),
+            let renamed = db
+                .call(move |c| -> Result<Option<(String, Device)>, DbError> {
+                    let Some(d) = devices::find(c, &device)? else {
+                        return Ok(None);
+                    };
+                    let old_slug = d.slug.clone();
+                    let updated = devices::rename(c, d.id, &clean)?.expect("exists");
+                    Ok(Some((old_slug, updated)))
                 })
-            })
-            .await
+                .await;
+            match renamed {
+                Ok(None) => Ok(CtlEvent::Error {
+                    message: "device not found".into(),
+                }),
+                Ok(Some((old_slug, updated))) => {
+                    if old_slug != updated.slug {
+                        let root = ctx.ring_root.clone();
+                        let db_reconcile = ctx.db.clone();
+                        let from = old_slug.clone();
+                        let to = updated.slug.clone();
+                        let res = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                            if devices::move_device_dir(&root, &from, &to)? {
+                                if let Err(e) =
+                                    crate::scanner::reconcile(&root, &db_reconcile, None)
+                                {
+                                    warn!(error = %e, "reconcile after CLI device rename failed");
+                                }
+                            }
+                            Ok(())
+                        })
+                        .await;
+                        if let Ok(Err(e)) = res {
+                            warn!(error = %e, "moving device dir failed");
+                        }
+                    }
+                    info!(from = %old_slug, to = %updated.slug, name = %updated.name, "device renamed");
+                    Ok(CtlEvent::Renamed {
+                        device: info(updated),
+                    })
+                }
+                Err(e) => Err(e),
+            }
         }
         CtlRequest::Pair => return pair(&ctx, &mut lines, &mut w).await,
         CtlRequest::PairDecision { .. } => Ok(CtlEvent::Error {

@@ -3,6 +3,10 @@
 //! Tokens are 32 random bytes, base64url-encoded; only `blake3(token)` is
 //! stored, so a leaked database does not leak usable credentials.
 
+use std::fs;
+use std::io;
+use std::path::Path;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use bring_core::db::DbError;
@@ -229,6 +233,57 @@ pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<Option<Device>, 
     by_id(conn, id)
 }
 
+/// Moves or merges `<root>/<old_slug>` into `<root>/<new_slug>` on disk when a
+/// device is renamed. Never overwrites an existing destination file. Returns
+/// `true` if anything on disk was moved.
+pub fn move_device_dir(root: &Path, old_slug: &str, new_slug: &str) -> io::Result<bool> {
+    if old_slug == new_slug || old_slug.is_empty() || new_slug.is_empty() {
+        return Ok(false);
+    }
+    let src = root.join(old_slug);
+    if !src.is_dir() {
+        return Ok(false);
+    }
+    let dst = root.join(new_slug);
+    if !dst.exists() {
+        fs::rename(&src, &dst)?;
+        return Ok(true);
+    }
+    if !dst.is_dir() {
+        return Ok(false);
+    }
+    let moved = merge_dir(&src, &dst)?;
+    let _ = fs::remove_dir(&src);
+    Ok(moved)
+}
+
+fn merge_dir(src: &Path, dst: &Path) -> io::Result<bool> {
+    fs::create_dir_all(dst)?;
+    let mut moved = false;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let from = entry.path();
+        let to = dst.join(&name);
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            if !to.exists() {
+                fs::rename(&from, &to)?;
+                moved = true;
+            } else if to.is_dir() {
+                if merge_dir(&from, &to)? {
+                    moved = true;
+                }
+                let _ = fs::remove_dir(&from);
+            }
+        } else if !to.exists() {
+            fs::rename(&from, &to)?;
+            moved = true;
+        }
+    }
+    Ok(moved)
+}
+
 /// Revokes a device's token. Returns `false` if it was already revoked.
 pub fn revoke(conn: &Connection, id: i64, now: i64) -> Result<bool, DbError> {
     Ok(conn.execute(
@@ -323,5 +378,27 @@ mod tests {
         assert!(validate_name("bad\nname").is_err());
         assert!(validate_name(&"a".repeat(65)).is_err());
         assert_eq!(validate_name("  My Phone  "), Ok("My Phone"));
+    }
+
+    #[test]
+    fn move_device_dir_renames_and_merges_without_overwriting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Simple atomic rename when destination doesn't exist.
+        fs::create_dir_all(root.join("old/Download")).unwrap();
+        fs::write(root.join("old/Download/a.txt"), b"a").unwrap();
+        assert!(move_device_dir(root, "old", "new").unwrap());
+        assert!(!root.join("old").exists());
+        assert_eq!(fs::read(root.join("new/Download/a.txt")).unwrap(), b"a");
+
+        // Merge when both exist: moves non-clashing files, never overwrites existing.
+        fs::create_dir_all(root.join("legacy/Download")).unwrap();
+        fs::write(root.join("legacy/Download/a.txt"), b"old-a").unwrap();
+        fs::write(root.join("legacy/Download/b.txt"), b"b").unwrap();
+        assert!(move_device_dir(root, "legacy", "new").unwrap());
+        assert_eq!(fs::read(root.join("new/Download/a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(root.join("new/Download/b.txt")).unwrap(), b"b");
+        assert!(root.join("legacy/Download/a.txt").exists());
     }
 }

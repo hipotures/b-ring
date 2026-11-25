@@ -19,6 +19,7 @@ const MOON_MIGRATIONS: &[&str] = &[
     include_str!("moon/0001_init.sql"),
     include_str!("moon/0002_multi_ring.sql"),
     include_str!("moon/0003_transfer_stats.sql"),
+    include_str!("moon/0004_entry_offload.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]

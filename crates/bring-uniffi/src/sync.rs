@@ -1070,8 +1070,13 @@ impl Moon {
     ) -> Result<Decision, MoonError> {
         let path = Path::new(&job.local);
         let current = local_stat(path)?;
+        let policy = if job.entry.offload_after_upload {
+            bring_core::offload::OffloadPolicy { threshold_bytes: 0 }
+        } else {
+            self.policy_for(&s.ring)
+        };
         let mut decision = offload::decide(
-            &self.policy_for(&s.ring),
+            &policy,
             &job.snapshot,
             Some(&VerifiedAck {
                 blake3: ack.blake3,
@@ -1148,7 +1153,7 @@ impl Moon {
                 }
                 tx.execute(
                     "UPDATE entries SET state = ?1, local_path = ?2, ring_path = ?3,
-                       remote_file_id = ?4, blake3 = ?5, size = ?6
+                       remote_file_id = ?4, blake3 = ?5, size = ?6, offload_after_upload = 0
                      WHERE id = ?7",
                     params![
                         if synced {
@@ -1202,6 +1207,11 @@ impl Moon {
                 })
             {
                 fs::remove_file(path)?;
+                if job.entry.offload_after_upload
+                    && let Some(parent) = path.parent()
+                {
+                    let _ = fs::remove_dir(parent);
+                }
             }
         }
         Ok(decision)

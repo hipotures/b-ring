@@ -274,6 +274,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 rings = cur.rings.map { if (it.ringId == ringId) updated else it },
             )
         }
+        loadFolders(ringId)
+        loadEntries(ringId)
         "Device renamed to ${updated.deviceSlug}"
     }
 

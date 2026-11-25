@@ -25,3 +25,26 @@ fun sanitizeFileName(raw: String?, fallback: String, maxBytes: Int = 200): Strin
     }
     return stem + ext
 }
+
+/**
+ * Normalises a user-typed Ring destination folder (`"Invoices/2026"`,
+ * `"/sm-s918b\\Docs/"` → `"sm-s918b/Docs"`). Drops empty, `.`, `..`,
+ * control characters and the reserved `.bring` top-level folder; falls back
+ * to [fallback] when nothing valid remains.
+ */
+fun sanitizeFolderPath(raw: String?, fallback: String = "Inbox"): String {
+    val rawParts = (raw ?: "")
+        .replace('\\', '/')
+        .split('/')
+        .map { seg ->
+            seg.filter { it >= ' ' && it != '\u007f' }
+                .trim()
+        }
+        .filter { it.isNotEmpty() }
+    if (rawParts.firstOrNull() == ".bring") return fallback
+    val parts = rawParts
+        .map { it.trimStart('.').trim() }
+        .filter { it.isNotEmpty() }
+    if (parts.isEmpty()) return fallback
+    return parts.joinToString("/")
+}

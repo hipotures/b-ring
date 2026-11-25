@@ -164,12 +164,70 @@ pub fn rename_ring(c: &Connection, ring_db_id: i64, name: &str) -> Result<RingRo
     ring_by_db_id(c, ring_db_id)?.ok_or(MoonError::NotPaired)
 }
 
-pub fn set_device_slug(c: &Connection, ring_db_id: i64, slug: &str) -> Result<RingRow, MoonError> {
-    c.execute(
+pub fn set_device_slug(
+    c: &mut Connection,
+    ring_db_id: i64,
+    old_slug: &str,
+    new_slug: &str,
+) -> Result<RingRow, MoonError> {
+    let tx = c.transaction()?;
+    tx.execute(
         "UPDATE rings SET device_slug = ?1 WHERE id = ?2",
-        params![slug, ring_db_id],
+        params![new_slug, ring_db_id],
     )?;
-    ring_by_db_id(c, ring_db_id)?.ok_or(MoonError::NotPaired)
+    if old_slug != new_slug && !old_slug.is_empty() && !new_slug.is_empty() {
+        let old_prefix = format!("{old_slug}/");
+        let new_prefix = format!("{new_slug}/");
+        let folders: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, ring_folder FROM watched_folders WHERE ring_id = ?1",
+            )?;
+            stmt.query_map([ring_db_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        for (wf_id, rf) in folders {
+            let updated_rf = if rf == old_slug {
+                Some(new_slug.to_owned())
+            } else {
+                rf.strip_prefix(&old_prefix)
+                    .map(|rest| format!("{new_prefix}{rest}"))
+            };
+            if let Some(target) = updated_rf {
+                tx.execute(
+                    "UPDATE watched_folders SET ring_folder = ?1 WHERE id = ?2",
+                    params![target, wf_id],
+                )?;
+            }
+        }
+        let entries: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, ring_path FROM entries WHERE ring_id = ?1 AND ring_path LIKE ?2",
+            )?;
+            stmt.query_map(params![ring_db_id, format!("{old_prefix}%")], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<Result<_, _>>()?
+        };
+        for (entry_id, rp) in entries {
+            if let Some(rest) = rp.strip_prefix(&old_prefix) {
+                let target = format!("{new_prefix}{rest}");
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM entries WHERE ring_id = ?1 AND ring_path = ?2)",
+                    params![ring_db_id, &target],
+                    |r| r.get(0),
+                )?;
+                if !exists {
+                    tx.execute(
+                        "UPDATE entries SET ring_path = ?1 WHERE id = ?2",
+                        params![target, entry_id],
+                    )?;
+                }
+            }
+        }
+    }
+    let row = ring_by_db_id(&tx, ring_db_id)?.ok_or(MoonError::NotPaired)?;
+    tx.commit()?;
+    Ok(row)
 }
 
 pub fn set_ring_offload(c: &Connection, ring_db_id: i64, bytes: u64) -> Result<(), MoonError> {
@@ -235,10 +293,11 @@ pub struct EntryRow {
     pub thumb: Option<Blake3Hash>,
     pub state: FileState,
     pub suppressed: bool,
+    pub offload_after_upload: bool,
 }
 
 pub const ENTRY_COLS: &str = "id, ring_id, ring_path, local_path, remote_file_id, size, mtime_ns, \
-                              mime, blake3, thumb_blake3, state, suppressed";
+                              mime, blake3, thumb_blake3, state, suppressed, offload_after_upload";
 
 pub fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<EntryRow> {
     Ok(EntryRow {
@@ -254,6 +313,7 @@ pub fn entry_from_row(r: &Row<'_>) -> rusqlite::Result<EntryRow> {
         thumb: r.get(9)?,
         state: r.get(10)?,
         suppressed: r.get(11)?,
+        offload_after_upload: r.get(12)?,
     })
 }
 
