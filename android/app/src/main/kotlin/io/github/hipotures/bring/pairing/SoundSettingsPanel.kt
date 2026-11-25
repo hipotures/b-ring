@@ -26,6 +26,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -169,7 +170,13 @@ fun BandScores(bands: List<BandScore>, source: String) {
     val limits = remember { soundLimits() }
     val threshold = LocalContext.current.bring.prefs.sound.value.detection.threshold(limits)
     Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
-        Label("Frame-start score per band · mic: $source")
+        Text(
+            "FRAME-START SCORE PER BAND · MIC: ${source.uppercase()}",
+            style = Tm.text.eyebrow,
+            color = Tm.colors.text2,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         bands.forEach { b ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
                 Text(
@@ -193,39 +200,63 @@ fun BandScores(bands: List<BandScore>, source: String) {
     }
 }
 
+private fun score2(v: Float) = String.format(Locale.ROOT, "%.2f", v).removePrefix("0")
+
 /**
- * Sweep results, one line per mic setting: frames decoded, time to the
- * first one, peak input level and best score per band. The winner is green.
+ * Sweep results: always all mic settings, one line each (pending ones show
+ * "—"), so the table never changes height. Columns: source, voice
+ * processing, frames decoded, time to the first one, peak level, best score
+ * per band. The winner is green, the running step is marked with ▸.
  */
 @Composable
-fun SweepTable(rows: List<SweepResult>) {
+fun SweepTable(rows: List<SweepResult>, running: Int?) {
     val winner = SweepResult.best(rows)
+    val combos = remember { SweepResult.combos() }
+    val bandsHz = rows.firstOrNull { it.bands.isNotEmpty() }?.bands?.map { it.lowHz }
     Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
-        Label("Sweep · frames · first · level · best score per band")
-        rows.forEach { r ->
-            val text = r.error?.let { "${r.label}: $it" } ?: buildString {
-                append(r.label.padEnd(18))
-                append(" ${r.frames}fr")
-                append(r.firstMs?.let { String.format(Locale.ROOT, " %4.1fs", it / 1000f) } ?: "    –")
-                append(String.format(Locale.ROOT, " L%.2f", r.peakLevel))
-                r.bands.forEach { b -> append(" ${kHz(b.lowHz)}:" + String.format(Locale.ROOT, "%.2f", b.best)) }
+        Label("Mic sweep")
+        Text(
+            "  src    proc fr first  lvl" + (bandsHz?.joinToString("") { kHz(it).padStart(5) } ?: ""),
+            style = Tm.text.code,
+            color = Tm.colors.text2,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip,
+        )
+        combos.forEachIndexed { i, (source, raw) ->
+            val r = rows.getOrNull(i)
+            val head = (if (running == i + 1) "▸ " else "  ") +
+                source.label.padEnd(7) + (if (raw) "off " else "on  ").padEnd(5)
+            val text = head + when {
+                r == null -> "—"
+                r.error != null -> "error: ${r.error}"
+                else -> String.format(Locale.ROOT, "%2d", r.frames) +
+                    (r.firstMs?.let { String.format(Locale.ROOT, " %4.1fs", it / 1000f) } ?: "     –") +
+                    " " + score2(r.peakLevel).padStart(4) +
+                    r.bands.joinToString("") { score2(it.best).padStart(5) }
             }
             Text(
                 text,
                 style = Tm.text.code,
                 color = when {
-                    r === winner -> Tm.colors.success
-                    r.error != null -> Tm.colors.warning
+                    r != null && r === winner -> Tm.colors.success
+                    r?.error != null -> Tm.colors.warning
+                    r == null -> Tm.colors.text2
                     else -> Tm.colors.text
                 },
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (r.error == null && r.sourceName.isNotEmpty() && r.sourceName != r.source.name.lowercase()) {
-                Text("  (${r.sourceName})", style = Tm.text.code, color = Tm.colors.text2)
-            }
         }
-        if (winner != null) {
-            Hint("Best: ${winner.label}. Set it under Sound pairing if Auto does worse.")
-        }
+        Text(
+            winner?.let { "Best: ${it.label}. Set it under Sound pairing if Auto does worse." }
+                ?: "Each setting listens 6 s; proc = voice processing.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Tm.colors.text2,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

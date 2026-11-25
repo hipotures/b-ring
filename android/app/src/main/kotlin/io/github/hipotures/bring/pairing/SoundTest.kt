@@ -13,17 +13,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.hipotures.bring.bring
-import io.github.hipotures.bring.ui.ErrorLine
+import io.github.hipotures.bring.ffi.soundLimits
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.PlateMark
 import io.github.hipotures.bring.ui.SharpButton
@@ -217,35 +219,37 @@ fun SoundTestPanel(expanded: Boolean, onToggle: () -> Unit, vm: SoundTestViewMod
                 modifier = Modifier.weight(1f),
             )
         }
-        when (val s = state) {
-            is SoundTestState.Listening -> {
-                LevelMeter(s.live.level)
-                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source)
-            }
-            is SoundTestState.Sweeping -> {
-                Text(
-                    "Sweep ${s.step}/${s.total}: ${s.label}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Tm.colors.text2,
-                )
-                LevelMeter(s.live.level)
-                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source)
-            }
-            is SoundTestState.Failed -> ErrorLine(s.message)
-            SoundTestState.Idle -> last?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source) }
+        // Every line is always there and one line high, so the panel never
+        // changes height (that made the settings page jump while scrolled).
+        val settings by context.bring.prefs.sound.collectAsStateWithLifecycle()
+        val limits = remember { soundLimits() }
+        val placeholder = remember(settings) { settings.bandsHz(limits).map { BandScore(it, 0f, 0f) } }
+        val live = when (val s = state) {
+            is SoundTestState.Listening -> s.live
+            is SoundTestState.Sweeping -> s.live
+            else -> last ?: SoundLive()
         }
-        val frames = when (val s = state) {
-            is SoundTestState.Listening -> s.live.frames
-            is SoundTestState.Sweeping -> s.live.frames
-            else -> last?.frames
+        val (status, statusColor) = when (val s = state) {
+            SoundTestState.Idle -> "Idle." to Tm.colors.text2
+            is SoundTestState.Listening -> "Listening with the saved settings…" to Tm.colors.text2
+            is SoundTestState.Sweeping -> "Sweep ${s.step}/${s.total}: ${s.label}" to Tm.colors.text2
+            is SoundTestState.Failed -> s.message to Tm.colors.danger
         }
-        if (frames != null && state !is SoundTestState.Failed) {
-            Text(
-                "Decoded OK: $frames ${if (frames == 1) "frame" else "frames"}",
-                style = MaterialTheme.typography.titleMedium,
-                color = if (frames > 0) Tm.colors.success else Tm.colors.text2,
-            )
-        }
-        if (rows.isNotEmpty()) SweepTable(rows)
+        Text(
+            status,
+            style = MaterialTheme.typography.bodyMedium,
+            color = statusColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        LevelMeter(if (busy) live.level else 0f)
+        BandScores(live.bands.ifEmpty { placeholder }, live.source.ifEmpty { "—" })
+        Text(
+            "Decoded OK: ${live.frames} ${if (live.frames == 1) "frame" else "frames"}",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (live.frames > 0) Tm.colors.success else Tm.colors.text2,
+            maxLines = 1,
+        )
+        SweepTable(rows, running = (state as? SoundTestState.Sweeping)?.step)
     }
 }
