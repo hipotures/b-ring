@@ -139,7 +139,14 @@ impl ThumbStore {
 
     fn run_ffmpeg(&self, file: &Path, seek: Option<&str>) -> io::Result<Vec<u8>> {
         let mut cmd = Command::new(&self.ffmpeg);
-        cmd.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
+        cmd.args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file",
+        ]);
         if let Some(s) = seek {
             cmd.args(["-ss", s]);
         }
