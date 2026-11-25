@@ -438,6 +438,8 @@ as soon as a Moon reaches the SAS step.
       errors, so louder is not better.
     - `--sound-band <Hz>` puts the lowest tone anywhere in 1000–21000 Hz
       (rounded to a 46.875 Hz step).
+    - Band sweeps and field measurements live in the separate
+      [neuroson](https://github.com/hipotures/neuroson) repo (`sound-probe`).
   - Rendering: *classic* has 5 ms raised-cosine edges per symbol; *smooth*
     (`--sound-style smooth`) keeps continuous phase and glides 10 ms between
     tones at the symbol boundaries, outside the decoder window, so there are
