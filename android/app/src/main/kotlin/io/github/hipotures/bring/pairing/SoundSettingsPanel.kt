@@ -200,6 +200,8 @@ fun BandScores(bands: List<BandScore>, source: String) {
     }
 }
 
+private val MARK_W = 14.dp
+
 private fun score2(v: Float) = String.format(Locale.ROOT, "%.2f", v).removePrefix("0")
 
 /**
@@ -215,18 +217,20 @@ fun SweepTable(rows: List<SweepResult>, running: Int?) {
     val bandsHz = rows.firstOrNull { it.bands.isNotEmpty() }?.bands?.map { it.lowHz }
     Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
         Label("Mic sweep")
-        Text(
-            "  src    proc fr first  lvl" + (bandsHz?.joinToString("") { kHz(it).padStart(5) } ?: ""),
-            style = Tm.text.code,
-            color = Tm.colors.text2,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Clip,
-        )
+        Row {
+            Box(Modifier.width(MARK_W))
+            Text(
+                "src    proc fr first  lvl" + (bandsHz?.joinToString("") { kHz(it).padStart(5) } ?: ""),
+                style = Tm.text.code,
+                color = Tm.colors.text2,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+            )
+        }
         combos.forEachIndexed { i, (source, raw) ->
             val r = rows.getOrNull(i)
-            val head = (if (running == i + 1) "▸ " else "  ") +
-                source.label.padEnd(7) + (if (raw) "off " else "on  ").padEnd(5)
+            val head = source.label.padEnd(7) + (if (raw) "off " else "on  ").padEnd(5)
             val text = head + when {
                 r == null -> "—"
                 r.error != null -> "error: ${r.error}"
@@ -235,19 +239,26 @@ fun SweepTable(rows: List<SweepResult>, running: Int?) {
                     " " + score2(r.peakLevel).padStart(4) +
                     r.bands.joinToString("") { score2(it.best).padStart(5) }
             }
-            Text(
-                text,
-                style = Tm.text.code,
-                color = when {
-                    r != null && r === winner -> Tm.colors.success
-                    r?.error != null -> Tm.colors.warning
-                    r == null -> Tm.colors.text2
-                    else -> Tm.colors.text
-                },
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // The marker sits in its own fixed column: "▸" is not in the
+            // mono font, and a fallback glyph would shift the row.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(MARK_W)) {
+                    if (running == i + 1) Text("▸", style = Tm.text.code, color = Tm.colors.accent, maxLines = 1)
+                }
+                Text(
+                    text,
+                    style = Tm.text.code,
+                    color = when {
+                        r != null && r === winner -> Tm.colors.success
+                        r?.error != null -> Tm.colors.warning
+                        r == null -> Tm.colors.text2
+                        else -> Tm.colors.text
+                    },
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Text(
             winner?.let { "Best: ${it.label}. Set it under Sound pairing if Auto does worse." }
