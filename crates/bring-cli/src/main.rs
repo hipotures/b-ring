@@ -1,11 +1,15 @@
 //! `bring` — companion CLI for `bringd` (talks over the control socket).
 
+mod ble;
+mod sound;
+
 use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use bring_core::ctl::{self, CtlEvent, CtlRequest, DeviceInfo};
+use bring_core::pairing::{BootstrapPayload, acoustic};
 use clap::{Parser, Subcommand};
 use qrcode::render::unicode::Dense1x2;
 use qrcode::{Color, QrCode};
@@ -25,13 +29,81 @@ enum Command {
     /// Show the Ring's state.
     Status,
     /// Pair a new Moon (shows a QR code and a code for manual entry).
-    Pair,
+    Pair(PairArgs),
     /// List paired devices.
     Devices,
     /// Revoke a device by slug or id.
     Revoke { device: String },
     /// Rename a device by slug or id.
     Rename { device: String, name: String },
+}
+
+/// Extra pairing channels; the QR code and the text code are always shown.
+#[derive(clap::Args, Default)]
+struct PairArgs {
+    /// Also play the code as sound, on repeat (the app's "Listen").
+    #[arg(long)]
+    sound: bool,
+    /// Also offer the code over Bluetooth LE (the app's "Bluetooth").
+    #[arg(long)]
+    ble: bool,
+    /// Write the sound to a WAV file (to play it on another device).
+    #[arg(long, value_name = "FILE")]
+    wav: Option<PathBuf>,
+}
+
+/// Channels that carry the code while `bring pair` waits for a Moon.
+#[derive(Default)]
+struct Beacons {
+    sound: Option<sound::SoundBeacon>,
+    ble: Option<ble::BleBeacon>,
+}
+
+impl Beacons {
+    /// Starts the requested channels. A channel that cannot start is reported
+    /// and skipped: the QR code and the text still work.
+    fn start(args: &PairArgs, text: &str) -> Result<Self, String> {
+        let payload = BootstrapPayload::from_text(text).map_err(|e| e.to_string())?;
+        let mut beacons = Self::default();
+        if args.sound || args.wav.is_some() {
+            let wav = acoustic::encode_wav(&payload);
+            if let Some(path) = &args.wav {
+                sound::write_private(path, &wav)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+                println!(
+                    "Sound written to {} (contains the code; delete it after use).",
+                    path.display()
+                );
+            }
+            if args.sound {
+                match sound::SoundBeacon::start(&wav) {
+                    Ok(b) => {
+                        println!("Playing the code as sound (\"Listen\" in the app).");
+                        beacons.sound = Some(b);
+                    }
+                    Err(e) => eprintln!("bring: sound: {e}"),
+                }
+            }
+        }
+        if args.ble {
+            match ble::BleBeacon::start(payload.to_bytes()) {
+                Ok(b) => {
+                    println!(
+                        "Offering the code over Bluetooth LE on {} (\"Bluetooth\" in the app).",
+                        b.adapter_name()
+                    );
+                    beacons.ble = Some(b);
+                }
+                Err(e) => eprintln!("bring: bluetooth: {e}"),
+            }
+        }
+        Ok(beacons)
+    }
+
+    fn stop(&mut self) {
+        self.sound = None;
+        self.ble = None;
+    }
 }
 
 struct Conn {
@@ -190,9 +262,9 @@ fn qr_ansi(qr: &QrCode) -> String {
     out
 }
 
-fn pair(conn: &mut Conn) -> Result<(), String> {
+fn pair(conn: &mut Conn, args: &PairArgs) -> Result<(), String> {
     conn.send(&CtlRequest::Pair)?;
-    match conn.recv()? {
+    let mut beacons = match conn.recv()? {
         CtlEvent::PairPayload {
             text,
             lan_url,
@@ -211,13 +283,17 @@ fn pair(conn: &mut Conn) -> Result<(), String> {
                 s => format!("{} min", s / 60),
             };
             println!("Ring: {lan_url} · expires in {expires}");
+            let beacons = Beacons::start(args, &text)?;
             println!("Waiting for a device...");
+            beacons
         }
         other => return Err(unexpected(other)),
-    }
+    };
     loop {
         match conn.recv()? {
             CtlEvent::PairSas { sas, device_name } => {
+                // A Moon has the code; stop broadcasting it.
+                beacons.stop();
                 println!("\n\"{device_name}\" wants to pair.");
                 println!("Code on this computer:  {}", ctl::format_sas(&sas));
                 let ok = ask_yes_no("Does the phone show the same code?");
@@ -296,7 +372,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 other => Err(unexpected(other)),
             }
         }
-        Command::Pair => pair(&mut conn),
+        Command::Pair(args) => pair(&mut conn, &args),
     }
 }
 
