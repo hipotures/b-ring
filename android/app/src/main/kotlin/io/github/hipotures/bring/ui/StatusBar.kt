@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
@@ -181,9 +180,8 @@ fun TopStrip(
             )
             if (route != null) RoutePlate(route)
             if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
-            if (onActivity != null) ActionIcon(Icons.AutoMirrored.Outlined.List, "Sync activity", onActivity)
             if (onSettings != null) ActionIcon(Icons.Outlined.Settings, "Settings", onSettings)
-            if (onSync == null && onActivity == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
+            if (onSync == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
         }
         when {
             onSync == null -> {}
