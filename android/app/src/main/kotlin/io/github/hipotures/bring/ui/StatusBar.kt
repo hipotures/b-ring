@@ -147,9 +147,9 @@ fun RingBar(
         else -> null
     }
     val subLine = when {
-        sync.running && sync.path != null -> listOfNotNull(
-            route.label.takeIf { route != RouteStatus.UNKNOWN },
-            sync.path.substringAfterLast('/'),
+        sync.running -> listOfNotNull(
+            route.label.takeIf { route != RouteStatus.UNKNOWN } ?: "Checking",
+            sync.ringName?.takeIf { multiRing && it.isNotBlank() },
         ).joinToString(" · ")
         else -> listOfNotNull(
             route.label.takeIf { route != RouteStatus.UNKNOWN } ?: "Checking",
@@ -174,15 +174,15 @@ fun RingBar(
             ) {
                 val (headline, headlineColor) = when {
                     sync.running -> {
-                        val base = if (sync.path != null) "Uploading" else "Syncing…"
-                        val prefix = if (multiRing && !sync.ringName.isNullOrBlank()) "$base · ${sync.ringName}" else base
-                        val detail = when {
-                            sync.path == null -> ""
-                            sync.total > 0 -> "${(sync.sent * 100 / sync.total).coerceIn(0, 100)}% · ${formatBytes(sync.bytes)}"
-                            sync.bytes > 0 -> formatBytes(sync.bytes)
-                            else -> ""
+                        val text = when {
+                            sync.files > 0 -> {
+                                val f = "${sync.files} ${if (sync.files == 1) "file" else "files"}"
+                                if (sync.bytes > 0) "Uploading · $f · ${formatBytes(sync.bytes)}" else "Uploading · $f"
+                            }
+                            sync.bytes > 0 -> "Uploading · ${formatBytes(sync.bytes)}"
+                            sync.path != null -> "Uploading…"
+                            else -> "Syncing…"
                         }
-                        val text = if (detail.isNotEmpty()) "$prefix · $detail" else prefix
                         text to c.text
                     }
                     route == RouteStatus.OFFLINE -> "Offline" to c.warning
