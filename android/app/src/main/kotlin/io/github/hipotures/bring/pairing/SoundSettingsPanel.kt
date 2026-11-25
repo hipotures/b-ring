@@ -165,11 +165,11 @@ private fun CustomBandField(s: SoundSettings, limits: SoundLimits, set: (SoundSe
  * best so far.
  */
 @Composable
-fun BandScores(bands: List<BandScore>, source: String, frames: Int) {
+fun BandScores(bands: List<BandScore>, source: String) {
     val limits = remember { soundLimits() }
     val threshold = LocalContext.current.bring.prefs.sound.value.detection.threshold(limits)
     Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
-        Label("Diagnostics · mic: $source · frames decoded: $frames")
+        Label("Frame-start score per band · mic: $source")
         bands.forEach { b ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
                 Text(
@@ -186,6 +186,10 @@ fun BandScores(bands: List<BandScore>, source: String, frames: Int) {
                 )
             }
         }
+        Hint(
+            "Bar: score now, line: threshold " + String.format(Locale.ROOT, "%.2f", threshold) +
+                ". Number: best score so far (noise ≈ 0.1, clean frame start = 1.00).",
+        )
     }
 }
 

@@ -58,7 +58,7 @@ sealed interface SoundTestState {
 /**
  * Sound reception test for `bring pair --sound` (any band): listens without
  * stopping at a code, or sweeps every mic source × voice processing.
- * Nothing is paired; heard codes are only shown.
+ * Nothing is paired; decoded codes are only counted.
  */
 class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.bring.prefs
@@ -67,8 +67,6 @@ class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
     /** Last live reading, kept after Stop so it can be read. */
     private val _last = MutableStateFlow<SoundLive?>(null)
     val last: StateFlow<SoundLive?> = _last.asStateFlow()
-    private val _lastCode = MutableStateFlow<String?>(null)
-    val lastCode: StateFlow<String?> = _lastCode.asStateFlow()
     private val _sweep = MutableStateFlow<List<SweepResult>>(emptyList())
     /** Results of the last sweep (partial if stopped). */
     val sweep: StateFlow<List<SweepResult>> = _sweep.asStateFlow()
@@ -76,10 +74,9 @@ class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
 
     fun listen() = run {
         _last.value = null
-        _lastCode.value = null
         _state.value = SoundTestState.Listening(SoundLive())
         try {
-            SoundListener.listen(getApplication(), prefs.sound.value, onCode = { _lastCode.value = it }) { p ->
+            SoundListener.listen(getApplication(), prefs.sound.value, onCode = {}) { p ->
                 val live = SoundLive(p.level, p.source, p.bands, p.frames)
                 _last.value = live
                 _state.value = SoundTestState.Listening(live)
@@ -96,7 +93,6 @@ class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
         val base = prefs.sound.value
         val combos = SweepResult.combos()
         _sweep.value = emptyList()
-        _lastCode.value = null
         combos.forEachIndexed { i, (source, raw) ->
             var row = SweepResult(source, raw)
             _state.value = SoundTestState.Sweeping(i + 1, combos.size, row.label, SoundLive())
@@ -106,8 +102,7 @@ class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
                     SoundListener.listen(
                         getApplication(),
                         base.copy(source = source, rawProcessing = raw),
-                        onCode = { code ->
-                            _lastCode.value = code
+                        onCode = {
                             if (row.firstMs == null) row = row.copy(firstMs = System.currentTimeMillis() - started)
                         },
                     ) { p ->
@@ -163,7 +158,6 @@ fun SoundTestPanel(expanded: Boolean, onToggle: () -> Unit, vm: SoundTestViewMod
     val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
     val last by vm.last.collectAsStateWithLifecycle()
-    val lastCode by vm.lastCode.collectAsStateWithLifecycle()
     val rows by vm.sweep.collectAsStateWithLifecycle()
     // The microphone only runs while the settings screen is shown.
     DisposableEffect(Unit) { onDispose { vm.stop() } }
@@ -226,7 +220,7 @@ fun SoundTestPanel(expanded: Boolean, onToggle: () -> Unit, vm: SoundTestViewMod
         when (val s = state) {
             is SoundTestState.Listening -> {
                 LevelMeter(s.live.level)
-                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source, s.live.frames)
+                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source)
             }
             is SoundTestState.Sweeping -> {
                 Text(
@@ -235,12 +229,23 @@ fun SoundTestPanel(expanded: Boolean, onToggle: () -> Unit, vm: SoundTestViewMod
                     color = Tm.colors.text2,
                 )
                 LevelMeter(s.live.level)
-                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source, s.live.frames)
+                if (s.live.bands.isNotEmpty()) BandScores(s.live.bands, s.live.source)
             }
             is SoundTestState.Failed -> ErrorLine(s.message)
-            SoundTestState.Idle -> last?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source, it.frames) }
+            SoundTestState.Idle -> last?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source) }
         }
-        lastCode?.let { Text("Last code: ${it.take(17)}…", style = Tm.text.code, color = Tm.colors.success) }
+        val frames = when (val s = state) {
+            is SoundTestState.Listening -> s.live.frames
+            is SoundTestState.Sweeping -> s.live.frames
+            else -> last?.frames
+        }
+        if (frames != null && state !is SoundTestState.Failed) {
+            Text(
+                "Decoded OK: $frames ${if (frames == 1) "frame" else "frames"}",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (frames > 0) Tm.colors.success else Tm.colors.text2,
+            )
+        }
         if (rows.isNotEmpty()) SweepTable(rows)
     }
 }
