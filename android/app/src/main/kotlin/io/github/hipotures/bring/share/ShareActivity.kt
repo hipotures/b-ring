@@ -149,6 +149,8 @@ class ShareActivity : ComponentActivity() {
         runCatching { moon.watchedFoldersFor(ringId) }.getOrDefault(emptyList())
             .forEach { wf -> addFolderAndParents(out, wf.ringFolder) }
         runCatching { moon.entriesFor(ringId, null) }.getOrDefault(emptyList())
+            .asSequence()
+            .filterNot { it.suppressed }
             .forEach { e ->
                 val slash = e.ringPath.lastIndexOf('/')
                 if (slash > 0) addFolderAndParents(out, e.ringPath.substring(0, slash))

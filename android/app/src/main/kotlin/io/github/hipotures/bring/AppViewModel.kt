@@ -284,7 +284,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val id = ringId ?: activeRingId() ?: return@launch
             runCatching { bring.moon.entriesFor(id, null) }.onSuccess { list ->
-                if (activeRingId() == id) _entries.value = list
+                if (activeRingId() == id) _entries.value = list.filterNot { it.suppressed }
             }
         }
     }
@@ -353,7 +353,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         val r = bring.moon.verifySyncFor(id)
                         SingletonImageLoader.get(app).memoryCache?.clear()
                         runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
-                            if (activeRingId() == id) _entries.value = it
+                            if (activeRingId() == id) _entries.value = it.filterNot { e -> e.suppressed }
                         }
                         if (r.queued > 0u) SyncScheduler.syncNow(app, ringId = id)
                         VerifyState.Done(
@@ -458,7 +458,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!bring.syncMutex.isLocked) {
             runCatching { bring.moon.scanLocalFor(id) }
             runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
-                if (activeRingId() == id) _entries.value = it
+                if (activeRingId() == id) _entries.value = it.filterNot { e -> e.suppressed }
             }
         }
         SyncScheduler.syncNow(getApplication(), queueAfter = true, ringId = id)
