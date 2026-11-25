@@ -202,6 +202,10 @@ fun BandScores(bands: List<BandScore>, source: String) {
 
 private val MARK_W = 14.dp
 
+/** RMS in `[0, 1]` as dBFS, e.g. "-52"; "-∞" for silence. */
+private fun dbfs(rms: Float) =
+    if (rms <= 0f) "-∞" else String.format(Locale.ROOT, "%.0f", 20 * kotlin.math.log10(rms).coerceAtLeast(-99f))
+
 private fun score2(v: Float) = String.format(Locale.ROOT, "%.2f", v).removePrefix("0")
 
 /**
@@ -220,7 +224,7 @@ fun SweepTable(rows: List<SweepResult>, running: Int?) {
         Row {
             Box(Modifier.width(MARK_W))
             Text(
-                "src    proc fr first  lvl" + (bandsHz?.joinToString("") { kHz(it).padStart(5) } ?: ""),
+                "src    proc fr first dBFS" + (bandsHz?.joinToString("") { kHz(it).padStart(5) } ?: ""),
                 style = Tm.text.code,
                 color = Tm.colors.text2,
                 maxLines = 1,
@@ -236,7 +240,7 @@ fun SweepTable(rows: List<SweepResult>, running: Int?) {
                 r.error != null -> "error: ${r.error}"
                 else -> String.format(Locale.ROOT, "%2d", r.frames) +
                     (r.firstMs?.let { String.format(Locale.ROOT, " %4.1fs", it / 1000f) } ?: "     –") +
-                    " " + score2(r.peakLevel).padStart(4) +
+                    " " + dbfs(r.peakLevel).padStart(4) +
                     r.bands.joinToString("") { score2(it.best).padStart(5) }
             }
             // The marker sits in its own fixed column: "▸" is not in the
@@ -261,8 +265,8 @@ fun SweepTable(rows: List<SweepResult>, running: Int?) {
             }
         }
         Text(
-            winner?.let { "Best: ${it.label}. Set it under Sound pairing if Auto does worse." }
-                ?: "Each setting listens 6 s; proc = voice processing.",
+            winner?.let { "Best: ${it.label}" }
+                ?: "Each setting listens 10 s; proc = voice processing.",
             style = MaterialTheme.typography.bodySmall,
             color = Tm.colors.text2,
             maxLines = 1,

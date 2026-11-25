@@ -146,8 +146,8 @@ class SoundTestViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        /** ~3 frames of a repeating beacon (1.86 s each). */
-        const val STEP_MS = 6_000L
+        /** ~5 frames of a repeating beacon (1.86 s each). */
+        const val STEP_MS = 10_000L
     }
 }
 
@@ -213,7 +213,7 @@ fun SoundTestPanel(expanded: Boolean, onToggle: () -> Unit, vm: SoundTestViewMod
                 modifier = Modifier.weight(1f),
             )
             SharpButton(
-                if (state is SoundTestState.Sweeping) "Stop sweep" else "Sweep mic (~50 s)",
+                if (state is SoundTestState.Sweeping) "Stop sweep" else "Sweep mic (~80 s)",
                 enabled = state !is SoundTestState.Listening,
                 onClick = { if (busy) vm.stop() else start("sweep") },
                 modifier = Modifier.weight(1f),

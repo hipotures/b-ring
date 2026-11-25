@@ -467,7 +467,7 @@ as soon as a Moon reaches the SAS step.
     the mic source (auto / raw / voice / mic / camera) and the voice
     processing. A **Sound test** panel in the app settings listens without
     pairing and without stopping at a code: live per-band scores, frames
-    decoded, and a sweep over every mic source × voice processing (6 s each)
+    decoded, and a sweep over every mic source × voice processing (10 s each)
     with a table of frames, time to the first frame, level and scores.
     One-way: Linux needs no microphone, so this works on Meta Quest 3.
 - **BLE** (`bring-core::pairing::ble`):
