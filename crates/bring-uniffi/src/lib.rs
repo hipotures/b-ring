@@ -10,6 +10,7 @@
 
 uniffi::setup_scaffolding!();
 
+mod channels;
 mod client;
 mod error;
 mod pairing;
@@ -32,6 +33,7 @@ use reqwest::{Client, RequestBuilder, StatusCode};
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 
+pub use channels::SoundReceiver;
 pub use error::MoonError;
 pub use pairing::{PairedRing, PairingSas};
 pub use store::WatchedFolder;
@@ -816,8 +818,7 @@ impl Moon {
         self.rt.block_on(async {
             let mut index = self.sync_index_inner(&s).await?;
             let scan = self.scan_local_inner(s.ring.id)?;
-            let (outbox, uploaded_ids) =
-                self.process_outbox_tracked(&s, listener.as_ref()).await?;
+            let (outbox, uploaded_ids) = self.process_outbox_tracked(&s, listener.as_ref()).await?;
             let after = self.sync_index_inner(&s).await?;
             index.received += after.received;
             index.cursor = after.cursor;
