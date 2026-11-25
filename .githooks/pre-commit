@@ -15,14 +15,10 @@ CARGO_TOML="$REPO_ROOT/Cargo.toml"
 COUNT="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 NEXT="$((COUNT + 1))"
 
-CURRENT="$(awk '
+CURRENT="$(awk -F'"' '
     /^\[workspace\.package\]/ { in_ws = 1; next }
     /^\[/ { in_ws = 0 }
-    in_ws && /^version[[:space:]]*=/ {
-        gsub(/.*"|".*/, "")
-        print
-        exit
-    }
+    in_ws && /^version[[:space:]]*=/ { print $2; exit }
 ' "$CARGO_TOML")"
 
 [ -n "$CURRENT" ] || exit 0
