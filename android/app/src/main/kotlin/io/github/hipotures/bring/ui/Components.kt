@@ -1,6 +1,7 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.Icons
@@ -240,14 +241,20 @@ fun <T> Segmented(
 
 /** `key   value`: the label in `labelMedium`, the value in mono. */
 @Composable
-fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified, copy: Boolean = false) {
+fun KeyValue(
+    key: String,
+    value: String,
+    valueColor: Color = Color.Unspecified,
+    copy: Boolean = false,
+    onEdit: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth()) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
             key,
             style = MaterialTheme.typography.labelMedium,
             color = Tm.colors.text2,
-            modifier = Modifier.widthIn(min = 104.dp).padding(end = TmDimens.space3, top = 1.dp),
+            modifier = Modifier.widthIn(min = 104.dp).padding(end = TmDimens.space3),
         )
         Text(
             value,
@@ -255,6 +262,17 @@ fun KeyValue(key: String, value: String, valueColor: Color = Color.Unspecified, 
             color = if (valueColor == Color.Unspecified) Tm.colors.text else valueColor,
             modifier = Modifier.weight(1f),
         )
+        if (onEdit != null) {
+            Icon(
+                Icons.Outlined.Edit,
+                "Edit $key",
+                Modifier
+                    .clickable(onClick = onEdit)
+                    .padding(start = TmDimens.space2, top = TmDimens.space1, bottom = TmDimens.space1)
+                    .size(18.dp),
+                tint = Tm.colors.link,
+            )
+        }
         if (copy) {
             Text(
                 "Copy",

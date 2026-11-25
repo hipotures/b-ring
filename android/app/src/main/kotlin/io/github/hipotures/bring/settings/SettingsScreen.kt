@@ -152,9 +152,16 @@ fun RingSettingsScreen(
 
         Panel(
             title = "Overview",
+            trailing = { SharpButton("Check connection", onClick = vm::recheckRoute) },
         ) {
-            KeyValue("Name", ring.name)
-            KeyValue("Device", ring.deviceSlug)
+            KeyValue("Name", ring.name, onEdit = {
+                draftName = ring.name
+                renaming = true
+            })
+            KeyValue("Device", ring.deviceSlug, onEdit = {
+                draftDeviceName = ring.deviceSlug
+                renamingDevice = true
+            })
             KeyValue("Device ID", ring.deviceId.take(8))
             KeyValue(
                 "Transferred",
@@ -170,20 +177,6 @@ fun RingSettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = Tm.colors.text2,
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
-                verticalArrangement = Arrangement.spacedBy(TmDimens.space2),
-            ) {
-                SharpButton("Rename Ring", onClick = {
-                    draftName = ring.name
-                    renaming = true
-                })
-                SharpButton("Rename device", onClick = {
-                    draftDeviceName = ring.deviceSlug
-                    renamingDevice = true
-                })
-                SharpButton("Check connection", onClick = vm::recheckRoute)
-            }
         }
 
         val queued = remember(entries) { entries.count { it.uploadPending } }
