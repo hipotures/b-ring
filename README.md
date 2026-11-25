@@ -22,7 +22,7 @@ UI built with [The Mechanics](https://github.com/hipotures/the-mechanics) in **L
   </tr>
   <tr>
     <td align="center"><img src="docs/screenshots/06_light_ring_settings.png" width="210" alt="Ring settings (Light)" /><br /><sub>Ring settings · Light</sub></td>
-    <td align="center"><img src="docs/screenshots/04_light_home_workstation.png" width="210" alt="Multi-Ring (Light)" /><br /><sub>Multi-Ring · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/04_light_watched_folders.png" width="210" alt="Watched folders & Offload (Light)" /><br /><sub>Watched folders · Light</sub></td>
     <td align="center"><img src="docs/screenshots/07_dark_home_nas.png" width="210" alt="Home (Dark)" /><br /><sub>Home · Dark</sub></td>
     <td align="center"><img src="docs/screenshots/08_dark_files_documents.png" width="210" alt="Documents (Dark)" /><br /><sub>Documents · Dark</sub></td>
   </tr>

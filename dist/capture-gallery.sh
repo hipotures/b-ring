@@ -188,6 +188,13 @@ DEMO_ENABLED=1
 tap_node text "Light"
 back
 
+# Ensure we are at the root folder (Watch folder '+' only appears at root)
+for _ in 1 2 3 4; do
+  dump_ui
+  if find_xy desc "Watch folder" >/dev/null 2>&1; then break; fi
+  back
+done
+
 echo "==> Capturing Light theme..."
 cap 01_light_home_nas.png
 
@@ -200,16 +207,16 @@ cap 03_light_files_camera.png
 back
 back
 
-tap_node text "workstation"
-cap 04_light_home_workstation.png
-
-tap_node text "home-nas"
 tap_node text~ "LAN ·"
 cap 05_light_activity.png
 back
 
 tap_node desc "Ring settings"
 cap 06_light_ring_settings.png
+# Scroll down to capture Watched folders + Offload settings
+adb_dev shell input swipe 540 1800 540 300 350
+sleep 0.5
+cap 04_light_watched_folders.png
 back
 
 echo "==> Capturing Dark theme..."

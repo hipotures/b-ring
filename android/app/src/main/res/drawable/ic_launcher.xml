@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A square ring with an orbiting moon: sharp, high contrast. -->
+<!-- Square ring with an orbiting moon in The Mechanics Dark palette (graphite + olive). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
-    <path android:fillColor="#FF0B0D10" android:pathData="M0,0h48v48h-48z" />
+    <path android:fillColor="#FF282C30" android:pathData="M0,0h48v48h-48z" />
     <path
-        android:pathData="M12,12h24v24h-24z"
-        android:strokeWidth="4"
-        android:strokeColor="#FF3FB6FF" />
-    <path android:fillColor="#FFE6E9EE" android:pathData="M33,6h9v9h-9z" />
+        android:pathData="M28,13 H11 V37 H35 V20"
+        android:strokeWidth="4.5"
+        android:strokeColor="#FFDFE2DC"
+        android:strokeLineCap="square"
+        android:strokeLineJoin="miter" />
+    <path android:fillColor="#FFAAC67B" android:pathData="M32,6h10v10h-10z" />
 </vector>

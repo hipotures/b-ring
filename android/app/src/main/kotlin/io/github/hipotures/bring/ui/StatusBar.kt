@@ -1,6 +1,7 @@
 package io.github.hipotures.bring.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +38,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hipotures.bring.R
@@ -119,6 +126,33 @@ fun RingSwitcher(
             }
         }
         HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
+    }
+}
+
+/** Transparent-background B-Ring emblem adapting to Light / Dark / Coffee themes. */
+@Composable
+private fun BringMark(modifier: Modifier = Modifier) {
+    val ringColor = Tm.colors.ink
+    val moonColor = Tm.colors.selectLine
+    Canvas(modifier) {
+        val s = size.minDimension / 48f
+        val ring = Path().apply {
+            moveTo(28f * s, 13f * s)
+            lineTo(11f * s, 13f * s)
+            lineTo(11f * s, 37f * s)
+            lineTo(35f * s, 37f * s)
+            lineTo(35f * s, 20f * s)
+        }
+        drawPath(
+            path = ring,
+            color = ringColor,
+            style = Stroke(width = 4.5f * s, cap = StrokeCap.Square, join = StrokeJoin.Miter),
+        )
+        drawRect(
+            color = moonColor,
+            topLeft = Offset(32f * s, 6f * s),
+            size = Size(10f * s, 10f * s),
+        )
     }
 }
 
@@ -244,13 +278,10 @@ fun TopStrip(
         ) {
             if (onBack != null) ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onBack)
             if (showAppIcon && onBack == null) {
-                Image(
-                    painter = painterResource(R.drawable.ic_launcher),
-                    contentDescription = null,
+                BringMark(
                     modifier = Modifier
                         .padding(start = TmDimens.space3)
-                        .size(26.dp)
-                        .clip(ControlShape),
+                        .size(26.dp),
                 )
             }
             Text(
