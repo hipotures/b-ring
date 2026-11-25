@@ -252,7 +252,8 @@ mod tests {
     fn moon_migrates_v1_to_v2_preserving_data_and_allowing_shared_folders() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        conn.execute_batch(include_str!("moon/0001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("moon/0001_init.sql"))
+            .unwrap();
         conn.pragma_update(None, "user_version", 1u32).unwrap();
 
         conn.execute(
@@ -289,17 +290,25 @@ mod tests {
         assert_eq!(v, latest_version(Role::Moon));
 
         let wf_ring: i64 = conn
-            .query_row("SELECT ring_id FROM watched_folders WHERE id = 10", [], |r| r.get(0))
+            .query_row(
+                "SELECT ring_id FROM watched_folders WHERE id = 10",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(wf_ring, 1);
 
         let entry_ring: i64 = conn
-            .query_row("SELECT ring_id FROM entries WHERE id = 42", [], |r| r.get(0))
+            .query_row("SELECT ring_id FROM entries WHERE id = 42", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(entry_ring, 1);
 
         let outbox_cnt: i64 = conn
-            .query_row("SELECT COUNT(*) FROM outbox WHERE entry_id = 42", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM outbox WHERE entry_id = 42", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(outbox_cnt, 1);
 
