@@ -61,6 +61,7 @@ import io.github.hipotures.bring.media.RingThumb
 import io.github.hipotures.bring.media.extensionOf
 import io.github.hipotures.bring.media.kindOf
 import io.github.hipotures.bring.ui.BadgeChip
+import io.github.hipotures.bring.ui.FileIcons
 import io.github.hipotures.bring.ui.FolderGlyph
 import io.github.hipotures.bring.ui.RowDivider
 import io.github.hipotures.bring.ui.Segmented
@@ -458,12 +459,22 @@ fun Thumb(entry: Entry, name: String) {
         }
     }
     MediaSquare {
-        // The label stays visible underneath while loading or on failure.
-        Text(extensionOf(name).take(4).uppercase().ifEmpty { "FILE" }, style = Tm.text.badge, color = Tm.colors.text2)
+        // The icon + extension stay visible underneath while loading or on failure.
+        val icon = remember(entry.mime, name) { FileIcons.forFile(entry.mime, name) }
+        val ext = remember(name) { extensionOf(name).take(4).uppercase() }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Icon(icon, null, Modifier.size(22.dp), tint = Tm.colors.text2)
+            if (ext.isNotEmpty()) {
+                Text(ext, style = Tm.text.badge, color = Tm.colors.text3, maxLines = 1)
+            }
+        }
         if (model != null) {
             AsyncImage(model, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        if (kind == MediaKind.VIDEO) {
+        if (kind == MediaKind.VIDEO && model != null) {
             Text(
                 "▶",
                 style = Tm.text.badge,

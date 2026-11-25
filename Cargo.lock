@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "bring-cli"
-version = "0.1.81"
+version = "0.1.82"
 dependencies = [
  "bring-core",
  "clap",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "bring-core"
-version = "0.1.81"
+version = "0.1.82"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "bring-uniffi"
-version = "0.1.81"
+version = "0.1.82"
 dependencies = [
  "bring-core",
  "getrandom 0.4.3",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "bringd"
-version = "0.1.81"
+version = "0.1.82"
 dependencies = [
  "axum",
  "axum-server",
