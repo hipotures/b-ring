@@ -15,7 +15,7 @@
 //!   - [`Band::LOW`], 1875–4828 Hz (default): audible, but survives any
 //!     speaker and voice-tuned microphone.
 //!   - [`Band::HIGH`], 18000–20953 Hz: inaudible to most adults. Field tests
-//!     (desktop speaker → Galaxy S20 FE, `crates/sound-probe`) decoded it
+//!     (desktop speaker → Galaxy S20 FE, `sound-probe` in the neuroson repo) decoded it
 //!     from 3 m even 40 dB below full level; the phone's microphone port
 //!     resonance peaks right there, and its ADC filter cuts off at ~22 kHz.
 //!     Played loud it is felt as pressure, so [`TxParams::high`] plays it
