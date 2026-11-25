@@ -7,6 +7,8 @@ use std::sync::Mutex;
 
 use bring_core::pairing::{BootstrapPayload, acoustic, ble};
 
+use crate::MoonError;
+
 /// Text code for raw payload bytes (e.g. the BLE characteristic value), or
 /// `None` if they are not a valid payload.
 #[uniffi::export]
@@ -39,15 +41,16 @@ pub struct SoundReceiver {
 #[uniffi::export]
 impl SoundReceiver {
     /// `sample_rate` of the PCM passed to [`SoundReceiver::push_pcm16`]
-    /// (16–192 kHz; 48 kHz avoids resampling). `None` if unsupported.
+    /// (16–192 kHz; 48 kHz avoids resampling).
     #[uniffi::constructor]
-    pub fn new(sample_rate: u32) -> Option<std::sync::Arc<Self>> {
-        acoustic::Decoder::new(sample_rate).map(|d| {
-            std::sync::Arc::new(Self {
-                decoder: Mutex::new(d),
-                level: Mutex::new(0.0),
-            })
-        })
+    pub fn new(sample_rate: u32) -> Result<std::sync::Arc<Self>, MoonError> {
+        let d = acoustic::Decoder::new(sample_rate).ok_or_else(|| MoonError::Invalid {
+            detail: format!("unsupported sample rate {sample_rate} Hz"),
+        })?;
+        Ok(std::sync::Arc::new(Self {
+            decoder: Mutex::new(d),
+            level: Mutex::new(0.0),
+        }))
     }
 
     /// 16-bit little-endian mono PCM. Returns the pairing code once heard.
@@ -111,6 +114,6 @@ mod tests {
             .chunks(3840)
             .find_map(|c| rx.push_pcm16(c.to_vec()));
         assert_eq!(got, Some(p.to_text()));
-        assert!(SoundReceiver::new(1_000).is_none());
+        assert!(SoundReceiver::new(1_000).is_err());
     }
 }
