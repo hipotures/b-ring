@@ -78,6 +78,8 @@ enum Cmd {
         /// Play the sweep this many times.
         #[arg(long, default_value_t = 1)]
         repeat: u32,
+        #[command(flatten)]
+        style: Style,
     },
     /// List the audio inputs PipeWire (or ALSA) can record from.
     Devices,
@@ -118,6 +120,25 @@ struct Sweep {
     /// Seconds per slot.
     #[arg(long, default_value_t = 10)]
     dwell: u32,
+}
+
+/// How the tones are rendered (listening test for the high band).
+#[derive(Args, Clone, Copy, Default)]
+struct Style {
+    /// Glide between tones with continuous phase and no gap between symbols
+    /// (only a fade at frame start/end) instead of the modem's 5 ms on/off
+    /// edges per symbol, which click.
+    #[arg(long)]
+    smooth: bool,
+    /// Level relative to the production modem, dB (e.g. -20).
+    #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+    volume: f32,
+}
+
+impl Style {
+    fn gain(&self) -> f32 {
+        AMPLITUDE * 10f32.powf(self.volume / 20.0)
+    }
 }
 
 impl Sweep {
@@ -190,8 +211,15 @@ fn tone_hz(first_bin: usize, band: usize, tone: u8) -> f32 {
     (first_bin + band * TONES + tone as usize) as f32 * BIN_HZ
 }
 
-/// Adds one frame (silence lead included) at `out[at..]`.
-fn render_frame(first_bin: usize, out: &mut [f32]) {
+/// Frequency glide between two symbols in smooth mode, centred on the
+/// boundary. Must stay outside the decoder's window (samples
+/// 768..2816 of each symbol), so at most 2 × 256 samples.
+const GLIDE: usize = 480;
+/// Fade in/out at the ends of a smooth frame (15 ms).
+const FADE: usize = 720;
+
+/// Writes one frame (silence lead included) into `out`.
+fn render_frame(first_bin: usize, style: Style, out: &mut [f32]) {
     let data = expected(first_bin);
     let mut symbols = PREAMBLE.to_vec();
     symbols.extend(
@@ -200,6 +228,11 @@ fn render_frame(first_bin: usize, out: &mut [f32]) {
             .iter()
             .map(|&[a, b]| [a >> 4, a & 15, b >> 4, b & 15]),
     );
+    let gain = style.gain();
+    if style.smooth {
+        render_smooth(first_bin, &symbols, gain, out);
+        return;
+    }
     for (k, sym) in symbols.iter().enumerate() {
         let start = LEAD + k * SYMBOL;
         for n in 0..SYMBOL {
@@ -213,18 +246,58 @@ fn render_frame(first_bin: usize, out: &mut [f32]) {
             let v: f32 = (0..BANDS)
                 .map(|b| (2.0 * PI * tone_hz(first_bin, b, sym[b]) * t + b as f32 * 1.3).sin())
                 .sum();
-            out[start + n] = AMPLITUDE * env * v;
+            out[start + n] = gain * env * v;
         }
     }
 }
 
-fn render_sweep(sweep: &Sweep, bins: &[usize]) -> Vec<f32> {
+/// Continuous-phase rendering: each band's tone glides to the next symbol's
+/// frequency over [`GLIDE`] samples around the boundary, so the waveform
+/// never jumps and the only amplitude change is the fade at the frame ends.
+fn render_smooth(first_bin: usize, symbols: &[[u8; BANDS]], gain: f32, out: &mut [f32]) {
+    let body = symbols.len() * SYMBOL;
+    let half = GLIDE / 2;
+    let mut phase = [0.0f64, 1.3, 2.6, 3.9];
+    for n in 0..body {
+        let (k, pos) = (n / SYMBOL, n % SYMBOL);
+        let edge = n.min(body - 1 - n);
+        let env = if edge < FADE {
+            0.5 - 0.5 * (PI * edge as f32 / FADE as f32).cos()
+        } else {
+            1.0
+        };
+        let mut v = 0.0f32;
+        for (b, ph) in phase.iter_mut().enumerate() {
+            let f = |k: usize| tone_hz(first_bin, b, symbols[k][b]) as f64;
+            let glide = |from: f64, to: f64, x: f64| {
+                from + (to - from) * (0.5 - 0.5 * (std::f64::consts::PI * x).cos())
+            };
+            let hz = if pos < half && k > 0 {
+                glide(f(k - 1), f(k), (pos + half) as f64 / GLIDE as f64)
+            } else if pos >= SYMBOL - half && k + 1 < symbols.len() {
+                glide(
+                    f(k),
+                    f(k + 1),
+                    (pos - (SYMBOL - half)) as f64 / GLIDE as f64,
+                )
+            } else {
+                f(k)
+            };
+            v += ph.sin() as f32;
+            *ph = (*ph + 2.0 * std::f64::consts::PI * hz / RATE as f64)
+                % (2.0 * std::f64::consts::PI);
+        }
+        out[LEAD + n] = gain * env * v;
+    }
+}
+
+fn render_sweep(sweep: &Sweep, bins: &[usize], style: Style) -> Vec<f32> {
     let slot = sweep.slot_samples();
     let mut out = vec![0.0f32; slot * bins.len()];
     for (i, &bin) in bins.iter().enumerate() {
         let mut at = i * slot;
         while at + FRAME_SAMPLES <= (i + 1) * slot {
-            render_frame(bin, &mut out[at..at + FRAME_SAMPLES]);
+            render_frame(bin, style, &mut out[at..at + FRAME_SAMPLES]);
             at += FRAME_PERIOD;
         }
     }
@@ -262,9 +335,18 @@ fn first_available<'a>(list: &'a [(&'a str, &'a [&'a str])]) -> Option<(&'a str,
     list.iter().copied().find(|(bin, _)| on_path(bin))
 }
 
-fn tx(sweep: &Sweep, wav: Option<&Path>, repeat: u32) -> Result<(), String> {
+fn tx(sweep: &Sweep, style: Style, wav: Option<&Path>, repeat: u32) -> Result<(), String> {
     let bins = sweep.first_bins()?;
-    let bytes = wav_bytes(&render_sweep(sweep, &bins));
+    let bytes = wav_bytes(&render_sweep(sweep, &bins, style));
+    println!(
+        "{} edges, {:+.0} dB",
+        if style.smooth {
+            "smooth"
+        } else {
+            "modem (5 ms)"
+        },
+        style.volume
+    );
     if let Some(path) = wav {
         fs::write(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         println!(
@@ -931,7 +1013,12 @@ fn stream(src: &mut dyn Read, rcv: &mut Receiver, deadline: Option<Instant>) -> 
 
 fn main() {
     let result = match Cli::parse().cmd {
-        Cmd::Tx { sweep, wav, repeat } => tx(&sweep, wav.as_deref(), repeat),
+        Cmd::Tx {
+            sweep,
+            wav,
+            repeat,
+            style,
+        } => tx(&sweep, style, wav.as_deref(), repeat),
         Cmd::Devices => devices(),
         Cmd::Rx {
             sweep,
@@ -1002,6 +1089,69 @@ mod tests {
         assert!(parse_sources(b"[]").unwrap().is_empty());
     }
 
+    fn decode_all(sw: &Sweep, style: Style) -> Vec<(u32, u32)> {
+        let bins = sw.first_bins().unwrap();
+        let mut rcv = Receiver::new(RATE, &bins, 0.45);
+        for c in render_sweep(sw, &bins, style).chunks(4096) {
+            rcv.push(c);
+        }
+        rcv.bands
+            .iter()
+            .map(|b| (b.stats.frames, b.stats.clean))
+            .collect()
+    }
+
+    #[test]
+    fn smooth_and_quiet_frames_decode_clean() {
+        let sw = sweep(2000, 18000);
+        let style = Style {
+            smooth: true,
+            volume: -20.0,
+        };
+        for (i, got) in decode_all(&sw, style).into_iter().enumerate() {
+            assert_eq!(got, (2, 2), "band {i}");
+        }
+    }
+
+    /// Share of a frame's energy below 15 kHz when the band sits at 18 kHz:
+    /// the clicks a listener might hear.
+    fn audible_leak_db(style: Style) -> f32 {
+        let mut frame = vec![0.0f32; FRAME_SAMPLES];
+        render_frame((18000.0 / BIN_HZ) as usize, style, &mut frame);
+        let fft = Fft::new(WINDOW);
+        let (mut low, mut all) = (0.0f64, 0.0f64);
+        for at in (0..=frame.len() - WINDOW).step_by(WINDOW / 2) {
+            let mut re = frame[at..at + WINDOW].to_vec();
+            for (n, x) in re.iter_mut().enumerate() {
+                *x *= 0.5 - 0.5 * (2.0 * PI * n as f32 / WINDOW as f32).cos();
+            }
+            let mut im = vec![0.0; WINDOW];
+            fft.run(&mut re, &mut im);
+            for k in 1..WINDOW / 2 {
+                let e = (re[k] * re[k] + im[k] * im[k]) as f64;
+                all += e;
+                if (k as f32) * (RATE as f32 / WINDOW as f32) < 15_000.0 {
+                    low += e;
+                }
+            }
+        }
+        10.0 * (low / all).log10() as f32
+    }
+
+    #[test]
+    fn smooth_mode_leaks_far_less_into_audible_band() {
+        let hard = audible_leak_db(Style::default());
+        let smooth = audible_leak_db(Style {
+            smooth: true,
+            volume: 0.0,
+        });
+        println!("energy below 15 kHz: modem {hard:.1} dB, smooth {smooth:.1} dB");
+        assert!(
+            smooth < hard - 20.0,
+            "modem {hard:.1} dB, smooth {smooth:.1} dB"
+        );
+    }
+
     #[test]
     fn rejects_bands_above_nyquist() {
         assert!(sweep(2000, 17000).first_bins().is_ok());
@@ -1013,7 +1163,7 @@ mod tests {
         let sw = sweep(2000, 18000);
         let bins = sw.first_bins().unwrap();
         let mut signal = vec![0.0f32; 1234];
-        signal.extend(render_sweep(&sw, &bins));
+        signal.extend(render_sweep(&sw, &bins, Style::default()));
         let mut rcv = Receiver::new(RATE, &bins, 0.45);
         for c in signal.chunks(4096) {
             rcv.push(c);
@@ -1029,7 +1179,7 @@ mod tests {
     fn resampled_44k1_capture_still_decodes_high_band() {
         let sw = sweep(17000, 17000);
         let bins = sw.first_bins().unwrap();
-        let clean = render_sweep(&sw, &bins);
+        let clean = render_sweep(&sw, &bins, Style::default());
         let ratio = 44_100.0 / 48_000.0;
         let n = (clean.len() as f64 * ratio) as usize;
         let captured: Vec<f32> = (0..n)
