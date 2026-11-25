@@ -89,9 +89,9 @@ class ShareActivity : ComponentActivity() {
             val theme by applicationContext.bring.prefs.theme.collectAsStateWithLifecycle()
             var selectedRing by remember { mutableStateOf(initialRing) }
             var folder by remember {
-                mutableStateOf(applicationContext.bring.prefs.lastShareFolder ?: "Inbox")
+                mutableStateOf(applicationContext.bring.prefs.lastShareFolder.orEmpty())
             }
-            var suggestions by remember { mutableStateOf(listOf("Inbox")) }
+            var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
             var sending by remember { mutableStateOf(false) }
 
             LaunchedEffect(selectedRing.ringId) {
@@ -155,7 +155,7 @@ class ShareActivity : ComponentActivity() {
                                 onValueChange = { folder = it },
                                 enabled = !sending,
                                 label = { Text("Folder on ${selectedRing.name}") },
-                                placeholder = { Text("e.g. Inbox, Docs, sm-s918b/Notes") },
+                                placeholder = { Text("Pick below or type a folder path") },
                                 singleLine = true,
                                 colors = tmFieldColors(),
                                 modifier = Modifier.fillMaxWidth(),
@@ -201,14 +201,14 @@ class ShareActivity : ComponentActivity() {
                             )
                         }
                     },
-                    confirmButton = {
+                            confirmButton = {
+                        val cleanFolder = sanitizeFolderPath(folder, fallback = "")
                         SharpButton(
                             if (sending) "Sending…" else "Send",
                             primary = true,
-                            enabled = !sending && folder.isNotBlank(),
+                            enabled = !sending && cleanFolder.isNotEmpty(),
                             onClick = {
                                 sending = true
-                                val cleanFolder = sanitizeFolderPath(folder)
                                 applicationContext.bring.prefs.lastShareFolder = cleanFolder
                                 sendTo(uris, selectedRing, cleanFolder)
                             },
@@ -225,7 +225,6 @@ class ShareActivity : ComponentActivity() {
     private fun knownFolders(ringId: String): List<String> {
         val moon = applicationContext.bring.moon
         val out = sortedSetOf<String>(String.CASE_INSENSITIVE_ORDER)
-        out += "Inbox"
         runCatching { moon.watchedFoldersFor(ringId) }.getOrDefault(emptyList())
             .forEach { wf ->
                 val clean = wf.ringFolder.trim('/')
