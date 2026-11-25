@@ -56,12 +56,18 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
     private val _received = MutableStateFlow<ReceivedCode?>(null)
     val received: StateFlow<ReceivedCode?> = _received.asStateFlow()
     private var channelJob: Job? = null
+    /** Last sound diagnostics, kept after "Listen" ends so they can be read. */
+    private val _lastSound = MutableStateFlow<ChannelState.Listening?>(null)
+    val lastSound: StateFlow<ChannelState.Listening?> = _lastSound.asStateFlow()
 
     /** Listens for `bring pair --sound` (RECORD_AUDIO must be granted). */
     fun listen() = runChannel(ChannelState.Listening(0f), "sound") {
+        _lastSound.value = null
         SoundListener.listen(getApplication(), bring.prefs.sound.value) { p ->
             if (_channel.value is ChannelState.Listening) {
-                _channel.value = ChannelState.Listening(p.level, p.source, p.bands)
+                val now = ChannelState.Listening(p.level, p.source, p.bands)
+                _channel.value = now
+                _lastSound.value = now
             }
         }
     }

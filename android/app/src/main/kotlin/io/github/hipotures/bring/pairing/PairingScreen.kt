@@ -84,6 +84,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     val received by vm.received.collectAsStateWithLifecycle()
     val canListen = remember { SoundListener.available(context) }
     val sound by context.bring.prefs.sound.collectAsStateWithLifecycle()
+    val lastSound by vm.lastSound.collectAsStateWithLifecycle()
     val canBluetooth = remember { BlePairingReader.available(context) }
     var heardVia by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(received) {
@@ -205,6 +206,9 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         }
                     }
                     ChannelStatus(channel, diagnostics = sound.diagnostics)
+                    if (sound.diagnostics && channel !is ChannelState.Listening) {
+                        lastSound?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source) }
+                    }
                     if (channel == ChannelState.Idle && valid) heardVia?.let { InfoLine("Code received over $it.") }
                     OutlinedTextField(
                         value = code,

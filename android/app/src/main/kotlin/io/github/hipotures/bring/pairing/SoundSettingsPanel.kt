@@ -42,7 +42,8 @@ import themechanics.compose.TmDimens
 import themechanics.compose.TmTone
 import java.util.Locale
 
-private fun kHz(hz: UInt) = String.format(Locale.ROOT, "%.1fk", hz.toFloat() / 1000f)
+/** 1875 → "1.9k", 18000 → "18k". */
+private fun kHz(hz: UInt) = String.format(Locale.ROOT, "%.1f", hz.toFloat() / 1000f).removeSuffix(".0") + "k"
 
 /**
  * Advanced settings of "Listen": bands, detection threshold, microphone
@@ -86,7 +87,7 @@ fun SoundSettingsPanel(expanded: Boolean = true, onToggle: (() -> Unit)? = null)
             label = { it.label },
             sub = {
                 when (it) {
-                    SoundBands.BOTH -> "${kHz(limits.lowBandHz)}+${kHz(limits.highBandHz)}"
+                    SoundBands.BOTH -> "${kHz(limits.lowBandHz).removeSuffix("k")}+${kHz(limits.highBandHz)}"
                     SoundBands.LOW -> kHz(limits.lowBandHz)
                     SoundBands.HIGH -> kHz(limits.highBandHz)
                     SoundBands.CUSTOM -> kHz(s.customHz.toUInt())
