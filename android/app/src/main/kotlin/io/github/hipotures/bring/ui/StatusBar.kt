@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -48,7 +49,6 @@ import io.github.hipotures.bring.sync.SyncRound
 import io.github.hipotures.bring.sync.roundTitle
 import themechanics.compose.Tm
 import themechanics.compose.TmDimens
-import themechanics.compose.TmTone
 
 /** Route → status mark. */
 fun routeMark(route: RouteStatus): PlateMark = when (route) {
@@ -123,9 +123,10 @@ fun RingSwitcher(
 }
 
 /**
- * Per-Ring compact bar below [RingSwitcher]: quiet metadata in normal state
- * ("LAN · Up to date · 05:32", tappable to Sync activity), loud badge only on
- * deviations or active uploads, plus local actions (Sync now, Ring settings).
+ * Per-Ring fixed-height (56 dp) two-line bar below [RingSwitcher]:
+ * line 1 = status (quiet text when normal, loud [Tag] on active sync / error / offline),
+ * line 2 = route + timestamp (or active filename), never disappearing during sync.
+ * Right side holds local actions (Sync now, Ring settings) at fixed positions.
  */
 @Composable
 fun RingBar(
@@ -140,97 +141,73 @@ fun RingBar(
     multiRing: Boolean = false,
 ) {
     val c = Tm.colors
+    val whenText = when {
+        lastChecked > (lastRound?.endedAt ?: 0L) -> formatWhen(lastChecked)
+        lastRound != null -> formatWhen(lastRound.endedAt)
+        else -> null
+    }
+    val subLine = when {
+        sync.running && sync.path != null -> listOfNotNull(
+            route.label.takeIf { route != RouteStatus.UNKNOWN },
+            sync.path.substringAfterLast('/'),
+        ).joinToString(" · ")
+        else -> listOfNotNull(
+            route.label.takeIf { route != RouteStatus.UNKNOWN } ?: "Checking",
+            whenText,
+        ).joinToString(" · ")
+    }
     Column(Modifier.fillMaxWidth().background(c.surface)) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
+                .height(56.dp)
                 .padding(start = TmDimens.space3, end = TmDimens.space1),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
-            Row(
+            Column(
                 Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
+                    .fillMaxHeight()
                     .clickable(onClick = onActivity),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                verticalArrangement = Arrangement.Center,
             ) {
-                when {
+                val (headline, headlineColor) = when {
                     sync.running -> {
-                        val base = if (sync.path != null) "Uploading" else "Syncing"
-                        val label = if (multiRing && !sync.ringName.isNullOrBlank()) "$base · ${sync.ringName}" else base
+                        val base = if (sync.path != null) "Uploading" else "Syncing…"
+                        val prefix = if (multiRing && !sync.ringName.isNullOrBlank()) "$base · ${sync.ringName}" else base
                         val detail = when {
                             sync.path == null -> ""
                             sync.total > 0 -> "${(sync.sent * 100 / sync.total).coerceIn(0, 100)}% · ${formatBytes(sync.bytes)}"
                             sync.bytes > 0 -> formatBytes(sync.bytes)
                             else -> ""
                         }
-                        Tag(label, TmTone.Info)
-                        if (detail.isNotEmpty()) {
-                            Text(detail, style = Tm.text.numeric, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                        val text = if (detail.isNotEmpty()) "$prefix · $detail" else prefix
+                        text to c.text
                     }
-                    route == RouteStatus.OFFLINE -> {
-                        Tag("Offline", TmTone.Warning)
-                        val whenText = when {
-                            lastChecked > 0 -> formatWhen(lastChecked)
-                            lastRound != null -> formatWhen(lastRound.endedAt)
-                            else -> ""
-                        }
-                        if (whenText.isNotEmpty()) {
-                            Text(whenText, style = Tm.text.numeric, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
+                    route == RouteStatus.OFFLINE -> "Offline" to c.warning
                     lastRound?.error != null && lastChecked <= lastRound.endedAt -> {
-                        Tag("Failed", TmTone.Danger)
-                        Text(
-                            "${roundTitle(lastRound)} · ${formatWhen(lastRound.endedAt)}",
-                            style = Tm.text.numeric,
-                            color = c.text2,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        "Failed · ${roundTitle(lastRound)}" to c.danger
                     }
-                    queued > 0 -> {
-                        Tag("$queued queued", TmTone.Pending)
-                        Text(
-                            listOfNotNull(
-                                route.label.takeIf { route != RouteStatus.UNKNOWN },
-                                if (lastChecked > 0) formatWhen(lastChecked) else null,
-                            ).joinToString(" · "),
-                            style = Tm.text.numeric,
-                            color = c.text2,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    else -> {
-                        val statusText = when {
-                            lastChecked > (lastRound?.endedAt ?: 0L) -> "Up to date"
-                            lastRound != null -> roundTitle(lastRound)
-                            else -> null
-                        }
-                        val whenText = when {
-                            lastChecked > (lastRound?.endedAt ?: 0L) -> formatWhen(lastChecked)
-                            lastRound != null -> formatWhen(lastRound.endedAt)
-                            else -> null
-                        }
-                        val line = listOfNotNull(
-                            route.label.takeIf { route != RouteStatus.UNKNOWN },
-                            statusText,
-                            whenText,
-                        ).joinToString(" · ")
-                        Text(
-                            line.ifEmpty { route.label },
-                            style = Tm.text.numeric,
-                            color = c.text2,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    queued > 0 -> "$queued queued" to c.text
+                    lastChecked > (lastRound?.endedAt ?: 0L) -> "Up to date" to c.text
+                    lastRound != null -> roundTitle(lastRound) to c.text
+                    else -> "Ready" to c.text
                 }
+                Text(
+                    headline,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = headlineColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subLine,
+                    style = Tm.text.numeric,
+                    color = c.text2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
             ActionIcon(SlidersGlyph, "Ring settings", onRingSettings)
