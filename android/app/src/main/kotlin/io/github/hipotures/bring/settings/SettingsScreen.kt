@@ -56,7 +56,6 @@ import io.github.hipotures.bring.ui.InfoLine
 import io.github.hipotures.bring.ui.KeyValue
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.PlateMark
-import io.github.hipotures.bring.ui.RoutePlate
 import io.github.hipotures.bring.ui.RowDivider
 import io.github.hipotures.bring.ui.Segmented
 import io.github.hipotures.bring.ui.SharpButton
@@ -120,7 +119,6 @@ fun RingSettingsScreen(
     onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
-    val route by vm.route.collectAsStateWithLifecycle()
     val sync by vm.sync.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
@@ -153,8 +151,7 @@ fun RingSettingsScreen(
         }
 
         Panel(
-            title = ring.name,
-            trailing = { RoutePlate(route) },
+            title = "Overview",
         ) {
             KeyValue("Name", ring.name)
             KeyValue("Device", ring.deviceSlug)
