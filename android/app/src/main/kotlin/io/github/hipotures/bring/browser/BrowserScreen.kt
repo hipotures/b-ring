@@ -130,7 +130,7 @@ fun BrowserScreen(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = if (selecting) 160.dp else TmDimens.space6),
     ) {
-        item { Box(Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2)) { header() } }
+        item { header() }
         item {
             Segmented(
                 options = Filter.entries,
