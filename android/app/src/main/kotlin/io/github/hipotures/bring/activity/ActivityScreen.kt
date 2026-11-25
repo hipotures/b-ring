@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.remember
 import io.github.hipotures.bring.ffi.Entry
-import io.github.hipotures.bring.ffi.EntryState
+import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,13 +46,13 @@ import themechanics.compose.TmTone
 
 /** Sync history: one record per round, newest first; tap a record for its files. */
 @Composable
-fun ActivityScreen(rounds: List<SyncRound>, lastChecked: Long, entries: List<Entry>) {
+fun ActivityScreen(rounds: List<SyncRound>, lastChecked: Long, rings: List<RingInfo>, entries: List<Entry>) {
     val c = Tm.colors
     var open by rememberSaveable { mutableStateOf<Long?>(null) }
-    val stats = remember(entries) { Stats.of(entries) }
+    val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
-            StatsTable(stats)
+            TransferSummary(totals)
             HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
         item {
@@ -137,36 +137,40 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Count and bytes of one group of entries. */
-private data class Tally(val files: Int = 0, val bytes: Long = 0) {
-    operator fun plus(e: Entry) = Tally(files + 1, bytes + e.size.toLong())
-}
-
-/** Every file this device knows of: here, on the Ring, or both. */
-private data class Stats(val all: Tally, val local: Tally, val synced: Tally, val remote: Tally, val queued: Tally) {
+/** Global cumulative remote transfer across all paired Rings, plus queued count. */
+private data class TransferTotals(
+    val files: Long,
+    val bytes: Long,
+    val queuedFiles: Int,
+    val queuedBytes: Long,
+) {
     companion object {
-        fun of(entries: List<Entry>): Stats {
-            var all = Tally(); var local = Tally(); var synced = Tally(); var remote = Tally(); var queued = Tally()
-            for (e in entries) {
-                all += e
-                when (e.state) {
-                    EntryState.LOCAL_ONLY -> local += e
-                    EntryState.SYNCED -> synced += e
-                    EntryState.REMOTE_ONLY -> remote += e
-                }
-                if (e.uploadPending) queued += e
+        fun of(rings: List<RingInfo>, entries: List<Entry>): TransferTotals {
+            var files = 0L
+            var bytes = 0L
+            for (r in rings) {
+                files += r.transferredFiles.toLong()
+                bytes += r.transferredBytes.toLong()
             }
-            return Stats(all, local, synced, remote, queued)
+            var qFiles = 0
+            var qBytes = 0L
+            for (e in entries) {
+                if (e.uploadPending) {
+                    qFiles++
+                    qBytes += e.size.toLong()
+                }
+            }
+            return TransferTotals(files, bytes, qFiles, qBytes)
         }
     }
 }
 
 /**
- * All / Local / Synced / Remote, same cuts as the file list's filter:
- * file count over total size. A line below when uploads are queued.
+ * Global cumulative transfer to remote Rings: total uploaded file count and
+ * total transferred size, plus a queued line when uploads are waiting.
  */
 @Composable
-private fun StatsTable(s: Stats) {
+private fun TransferSummary(t: TransferTotals) {
     val c = Tm.colors
     Column(
         Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space3),
@@ -179,24 +183,27 @@ private fun StatsTable(s: Stats) {
                 .border(TmDimens.bw2, c.line2)
                 .background(c.surface),
         ) {
-            listOf("All" to s.all, "Local" to s.local, "Synced" to s.synced, "Remote" to s.remote)
-                .forEachIndexed { i, (label, t) ->
-                    if (i > 0) Box(Modifier.width(TmDimens.bw1).fillMaxHeight().background(c.line3))
-                    Column(
-                        Modifier.weight(1f).padding(horizontal = TmDimens.space2, vertical = TmDimens.space2),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(label.uppercase(), style = Tm.text.eyebrow, color = c.text2, maxLines = 1)
-                        Text("${t.files}", style = Tm.text.numeric, color = c.text, maxLines = 1)
-                        Text(formatBytes(t.bytes), style = Tm.text.numeric, color = c.text2, maxLines = 1)
-                    }
-                }
+            Column(
+                Modifier.weight(1f).padding(horizontal = TmDimens.space3, vertical = TmDimens.space2),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("UPLOADED FILES", style = Tm.text.eyebrow, color = c.text2, maxLines = 1)
+                Text("${t.files}", style = Tm.text.numeric, color = c.text, maxLines = 1)
+            }
+            Box(Modifier.width(TmDimens.bw1).fillMaxHeight().background(c.line3))
+            Column(
+                Modifier.weight(1f).padding(horizontal = TmDimens.space3, vertical = TmDimens.space2),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("TOTAL SIZE", style = Tm.text.eyebrow, color = c.text2, maxLines = 1)
+                Text(formatBytes(t.bytes), style = Tm.text.numeric, color = c.text, maxLines = 1)
+            }
         }
-        if (s.queued.files > 0) {
+        if (t.queuedFiles > 0) {
             Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2), verticalAlignment = Alignment.CenterVertically) {
                 Tag("Queued", TmTone.Pending)
                 Text(
-                    "${s.queued.files} ${if (s.queued.files == 1) "file" else "files"} · ${formatBytes(s.queued.bytes)}",
+                    "${t.queuedFiles} ${if (t.queuedFiles == 1) "file" else "files"} · ${formatBytes(t.queuedBytes)}",
                     style = Tm.text.numeric,
                     color = c.text,
                 )

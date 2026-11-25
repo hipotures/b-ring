@@ -1,5 +1,6 @@
 package io.github.hipotures.bring.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,9 +30,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.hipotures.bring.R
 import io.github.hipotures.bring.SyncUi
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
@@ -56,9 +60,9 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Horizontal switcher for paired Rings on Home: scrollable Ring chips on the
- * left, with optional per-Ring settings and "+" (add Ring) actions pinned at
- * the far right edge.
+ * Horizontal switcher for paired Rings on Home: scrollable Ring chips only.
+ * Everything above this bar is global (app-wide); everything below belongs to
+ * the selected Ring.
  */
 @Composable
 fun RingSwitcher(
@@ -66,97 +70,102 @@ fun RingSwitcher(
     activeRingId: String,
     routes: Map<String, RouteStatus>,
     onSelect: (String) -> Unit,
-    onRingSettings: (() -> Unit)? = null,
-    onAddRing: (() -> Unit)? = null,
 ) {
     val c = Tm.colors
     Column(Modifier.fillMaxWidth().background(c.chrome)) {
         Row(
             Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = TmDimens.space3, vertical = TmDimens.space1_5),
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                rings.forEach { ring ->
-                    val selected = ring.ringId == activeRingId
-                    val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
-                    Row(
-                        Modifier
-                            .border(
-                                if (selected) TmDimens.bwControl else TmDimens.bw2,
-                                if (selected) c.ink else c.line2,
-                                ControlShape,
-                            )
-                            .background(if (selected) c.selectBg else c.surface, ControlShape)
-                            .clickable { onSelect(ring.ringId) }
-                            .heightIn(min = TmDimens.controlSm)
-                            .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
-                    ) {
-                        PlateMarkIcon(routeMark(r), 12.dp)
-                        Text(
-                            ring.name,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = c.text,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+            rings.forEach { ring ->
+                val selected = ring.ringId == activeRingId
+                val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
+                Row(
+                    Modifier
+                        .border(
+                            if (selected) TmDimens.bwControl else TmDimens.bw2,
+                            if (selected) c.ink else c.line2,
+                            ControlShape,
                         )
-                    }
-                }
-            }
-            if (onRingSettings != null) {
-                Row(
-                    Modifier
-                        .border(TmDimens.bw2, c.line2, ControlShape)
-                        .background(c.surface, ControlShape)
-                        .clickable(onClick = onRingSettings)
+                        .background(if (selected) c.selectBg else c.surface, ControlShape)
+                        .clickable { onSelect(ring.ringId) }
                         .heightIn(min = TmDimens.controlSm)
-                        .padding(horizontal = TmDimens.space2, vertical = TmDimens.space1),
+                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
                 ) {
-                    Icon(SlidersGlyph, "Ring settings", Modifier.size(18.dp), tint = c.text2)
+                    PlateMarkIcon(routeMark(r), 12.dp)
+                    Text(
+                        ring.name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
-            if (onAddRing != null) {
-                Row(
-                    Modifier
-                        .border(TmDimens.bw2, c.line2, ControlShape)
-                        .background(c.surface, ControlShape)
-                        .clickable(onClick = onAddRing)
-                        .heightIn(min = TmDimens.controlSm)
-                        .padding(horizontal = TmDimens.space2, vertical = TmDimens.space1),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Outlined.Add, "Add Ring", Modifier.size(18.dp), tint = c.link)
-                }
-            }
+        }
+        HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
+    }
+}
+
+/**
+ * Per-Ring header below [RingSwitcher]: route plate + local actions (Sync now,
+ * Ring settings) and the tappable sync-status line for the selected Ring.
+ */
+@Composable
+fun RingBar(
+    route: RouteStatus,
+    sync: SyncUi,
+    onSync: () -> Unit,
+    onRingSettings: () -> Unit,
+    onActivity: () -> Unit,
+    lastRound: SyncRound? = null,
+    lastChecked: Long = 0L,
+    queued: Int = 0,
+    multiRing: Boolean = false,
+) {
+    val c = Tm.colors
+    Column(Modifier.fillMaxWidth().background(c.surface)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(start = TmDimens.space3, end = TmDimens.space1),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RoutePlate(route)
+            Spacer(Modifier.weight(1f))
+            ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
+            ActionIcon(SlidersGlyph, "Ring settings", onRingSettings)
+        }
+        when {
+            sync.running -> ActiveSync(sync, multiRing, onActivity)
+            queued > 0 && lastRound?.error == null -> QueuedStatus(queued, lastChecked, onActivity)
+            lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
+            lastRound != null -> LastRound(lastRound, onActivity)
         }
         HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
     }
 }
 
 /**
- * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title,
- * optional route plate and 48 dp icon actions. On the home screen a second
- * line holds the last round's result. Uploads show in the system status bar,
- * so the strip never changes height and nothing below it jumps.
+ * Level 1 region: `chrome` band with a divider below. Title, optional route
+ * plate and 48 dp icon actions.
  */
 @Composable
 fun TopStrip(
     title: String,
     route: RouteStatus? = null,
     sync: SyncUi,
+    showAppIcon: Boolean = false,
     onBack: (() -> Unit)? = null,
     onSync: (() -> Unit)? = null,
+    onAddRing: (() -> Unit)? = null,
     onActivity: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     lastRound: SyncRound? = null,
@@ -171,18 +180,35 @@ fun TopStrip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (onBack != null) ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onBack)
+            if (showAppIcon && onBack == null) {
+                Image(
+                    painter = painterResource(R.drawable.ic_launcher),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(start = TmDimens.space3)
+                        .size(26.dp)
+                        .clip(ControlShape),
+                )
+            }
             Text(
                 title,
                 style = MaterialTheme.typography.titleLarge,
                 color = c.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = if (onBack == null) TmDimens.space3 else TmDimens.space1),
+                modifier = Modifier.weight(1f).padding(
+                    start = when {
+                        onBack != null -> TmDimens.space1
+                        showAppIcon -> TmDimens.space2
+                        else -> TmDimens.space3
+                    },
+                ),
             )
             if (route != null) RoutePlate(route)
             if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
+            if (onAddRing != null) ActionIcon(Icons.Outlined.Add, "Add Ring", onAddRing)
             if (onSettings != null) ActionIcon(Icons.Outlined.Settings, "Settings", onSettings)
-            if (onSync == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
+            if (onSync == null && onAddRing == null && onSettings == null) Spacer(Modifier.width(TmDimens.space3))
         }
         when {
             onSync == null -> {}
@@ -192,7 +218,7 @@ fun TopStrip(
             lastChecked > (lastRound?.endedAt ?: 0L) -> LastCheck(lastChecked, onActivity)
             lastRound != null -> LastRound(lastRound, onActivity)
         }
-        HorizontalDivider(thickness = TmDimens.bw1, color = c.line1)
+        HorizontalDivider(thickness = if (onAddRing != null) TmDimens.bw2 else TmDimens.bw1, color = if (onAddRing != null) c.line2 else c.line1)
     }
 }
 

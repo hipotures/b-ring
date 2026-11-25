@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -130,7 +131,6 @@ fun BrowserScreen(
         contentPadding = PaddingValues(bottom = if (selecting) 160.dp else TmDimens.space6),
     ) {
         item { Box(Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2)) { header() } }
-        item { Breadcrumbs(dir, onDir, rootLabel = ringName) }
         item {
             Segmented(
                 options = Filter.entries,
@@ -140,6 +140,9 @@ fun BrowserScreen(
                 sub = { f -> "${if (f.state == null) here.size else counts[f.state] ?: 0}" },
                 modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
             )
+        }
+        item {
+            Breadcrumbs(dir, onDir, rootLabel = ringName)
             HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
         }
         if (rows.isEmpty()) {
@@ -273,6 +276,9 @@ private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String 
             .padding(horizontal = TmDimens.space1),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (dir.isNotEmpty()) {
+            ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", { onDir(parentOf(dir)) })
+        }
         Crumb(rootLabel, current = dir.isEmpty()) { onDir("") }
         crumbs(dir).forEach { (name, path) ->
             Text("/", style = Tm.text.code, color = Tm.colors.text3)

@@ -34,6 +34,7 @@ import io.github.hipotures.bring.pairing.PairingScreen
 import io.github.hipotures.bring.settings.AppSettingsScreen
 import io.github.hipotures.bring.settings.RingSettingsScreen
 import io.github.hipotures.bring.ui.BringTheme
+import io.github.hipotures.bring.ui.RingBar
 import io.github.hipotures.bring.ui.RingSwitcher
 import io.github.hipotures.bring.ui.TopStrip
 import io.github.hipotures.bring.viewer.ViewerScreen
@@ -128,17 +129,12 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
         when (screen) {
             Screen.HOME -> {
                 TopStrip(
-                    title = active.name,
-                    route = route,
+                    title = "B-Ring",
+                    route = null,
                     sync = sync,
-                    onBack = if (dir.isEmpty()) null else ({ dir = parentOf(dir) }),
-                    onSync = vm::syncNow,
-                    onActivity = { screen = Screen.ACTIVITY },
+                    showAppIcon = true,
+                    onAddRing = { screen = Screen.ADD_RING },
                     onSettings = { screen = Screen.SETTINGS },
-                    lastRound = rounds.firstOrNull(),
-                    lastChecked = lastChecked,
-                    queued = entries.count { it.uploadPending },
-                    multiRing = multiRing,
                 )
                 RingSwitcher(
                     rings = p.rings,
@@ -148,8 +144,17 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                         vm.selectRing(id)
                         dir = ""
                     },
+                )
+                RingBar(
+                    route = route,
+                    sync = sync,
+                    onSync = vm::syncNow,
                     onRingSettings = { screen = Screen.RING_SETTINGS },
-                    onAddRing = { screen = Screen.ADD_RING },
+                    onActivity = { screen = Screen.ACTIVITY },
+                    lastRound = rounds.firstOrNull(),
+                    lastChecked = lastChecked,
+                    queued = entries.count { it.uploadPending },
+                    multiRing = multiRing,
                 )
                 BrowserScreen(
                     entries = entries,
@@ -185,8 +190,8 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                 }
             }
             Screen.ACTIVITY -> {
-                TopStrip("Sync activity", route, sync, onBack = { screen = Screen.HOME })
-                ActivityScreen(rounds, lastChecked, entries)
+                TopStrip("Sync activity", route = null, sync = sync, onBack = { screen = Screen.HOME })
+                ActivityScreen(rounds, lastChecked, p.rings, entries)
             }
             Screen.SETTINGS -> {
                 TopStrip("Settings", route = null, sync = sync, onBack = { screen = Screen.HOME })
