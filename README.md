@@ -9,6 +9,31 @@ truth.
 - Workspace: `crates/bring-core`, `crates/bringd`, `crates/bring-cli` (`bring`),
   `crates/bring-uniffi`; Android client in `android/`.
 
+## Screenshots
+
+UI built with [The Mechanics](https://github.com/hipotures/the-mechanics) in **Light**, **Dark**, and **Coffee** themes:
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/01_light_home_nas.png" width="210" alt="Home (Light)" /><br /><sub>Home · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/02_light_folder_pixel9.png" width="210" alt="Folders (Light)" /><br /><sub>Folders · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/03_light_files_camera.png" width="210" alt="Files (Light)" /><br /><sub>Files · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/05_light_activity.png" width="210" alt="Sync activity (Light)" /><br /><sub>Sync activity · Light</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/06_light_ring_settings.png" width="210" alt="Ring settings (Light)" /><br /><sub>Ring settings · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/04_light_home_workstation.png" width="210" alt="Multi-Ring (Light)" /><br /><sub>Multi-Ring · Light</sub></td>
+    <td align="center"><img src="docs/screenshots/07_dark_home_nas.png" width="210" alt="Home (Dark)" /><br /><sub>Home · Dark</sub></td>
+    <td align="center"><img src="docs/screenshots/08_dark_files_documents.png" width="210" alt="Documents (Dark)" /><br /><sub>Documents · Dark</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/09_dark_activity.png" width="210" alt="Sync activity (Dark)" /><br /><sub>Sync activity · Dark</sub></td>
+    <td align="center"><img src="docs/screenshots/10_dark_settings.png" width="210" alt="Settings (Dark)" /><br /><sub>Settings · Dark</sub></td>
+    <td align="center"><img src="docs/screenshots/11_coffee_home_archive.png" width="210" alt="Home (Coffee)" /><br /><sub>Home · Coffee</sub></td>
+    <td align="center"><img src="docs/screenshots/12_coffee_add_ring.png" width="210" alt="Pair Ring (Coffee)" /><br /><sub>Pair Ring · Coffee</sub></td>
+  </tr>
+</table>
+
 ## Running the Ring
 
 ```sh
@@ -44,6 +69,7 @@ debounce_ms = 2000                       # quiet time before a change is indexed
 ffmpeg      = "ffmpeg"                   # video/HEIC thumbnails (optional)
 notifications = false                    # desktop notifications on uploads (off by default)
 pairing_ttl_secs = 300
+min_free_percent = 5                     # refuse uploads below N% free disk space (1..=99)
 ```
 
 ## Development
