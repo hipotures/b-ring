@@ -2,6 +2,10 @@ package io.github.hipotures.bring
 
 import android.content.Context
 import androidx.core.content.edit
+import io.github.hipotures.bring.pairing.MicSource
+import io.github.hipotures.bring.pairing.SoundBands
+import io.github.hipotures.bring.pairing.SoundDetection
+import io.github.hipotures.bring.pairing.SoundSettings
 import io.github.hipotures.bring.ui.ThemeChoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +38,35 @@ class Prefs(context: Context) {
         _demoMode.value = enabled
     }
 
+    private val _sound = MutableStateFlow(loadSound())
+    /** Advanced settings of "Listen" (sound pairing). */
+    val sound: StateFlow<SoundSettings> = _sound.asStateFlow()
+
+    fun setSound(s: SoundSettings) {
+        sp.edit {
+            putString(SOUND_BANDS, s.bands.name)
+            putInt(SOUND_CUSTOM_HZ, s.customHz)
+            putString(SOUND_DETECTION, s.detection.name)
+            putString(SOUND_SOURCE, s.source.name)
+            putBoolean(SOUND_RAW, s.rawProcessing)
+            putBoolean(SOUND_DIAGNOSTICS, s.diagnostics)
+        }
+        _sound.value = s
+    }
+
+    private fun loadSound(): SoundSettings {
+        val d = SoundSettings()
+        return SoundSettings(
+            bands = SoundBands.entries.firstOrNull { it.name == sp.getString(SOUND_BANDS, null) } ?: d.bands,
+            customHz = sp.getInt(SOUND_CUSTOM_HZ, d.customHz),
+            detection = SoundDetection.entries.firstOrNull { it.name == sp.getString(SOUND_DETECTION, null) }
+                ?: d.detection,
+            source = MicSource.entries.firstOrNull { it.name == sp.getString(SOUND_SOURCE, null) } ?: d.source,
+            rawProcessing = sp.getBoolean(SOUND_RAW, d.rawProcessing),
+            diagnostics = sp.getBoolean(SOUND_DIAGNOSTICS, d.diagnostics),
+        )
+    }
+
     /** User-chosen fallback offload threshold, or null for the engine default. */
     var offloadThresholdBytes: ULong?
         get() = if (sp.contains(OFFLOAD)) sp.getLong(OFFLOAD, 0).toULong() else null
@@ -56,5 +89,11 @@ class Prefs(context: Context) {
         const val SELECTED_RING = "selected_ring_id"
         const val LAST_SHARE_FOLDER = "last_share_folder"
         const val DEMO_MODE = "demo_mode"
+        const val SOUND_BANDS = "sound_bands"
+        const val SOUND_CUSTOM_HZ = "sound_custom_hz"
+        const val SOUND_DETECTION = "sound_detection"
+        const val SOUND_SOURCE = "sound_source"
+        const val SOUND_RAW = "sound_raw_processing"
+        const val SOUND_DIAGNOSTICS = "sound_diagnostics"
     }
 }

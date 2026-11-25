@@ -28,8 +28,15 @@ sealed interface PairState {
 /** A code channel other than the camera or the keyboard (sound, Bluetooth). */
 sealed interface ChannelState {
     data object Idle : ChannelState
-    /** [level] is the microphone RMS in `[0, 1]`. */
-    data class Listening(val level: Float) : ChannelState
+    /**
+     * [level] is the microphone RMS in `[0, 1]`; [source] the `AudioRecord`
+     * source in use; [bands] the per-band detection scores (diagnostics).
+     */
+    data class Listening(
+        val level: Float,
+        val source: String = "",
+        val bands: List<BandScore> = emptyList(),
+    ) : ChannelState
     data class Bluetooth(val status: String) : ChannelState
     data class Failed(val message: String) : ChannelState
 }
@@ -52,8 +59,10 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Listens for `bring pair --sound` (RECORD_AUDIO must be granted). */
     fun listen() = runChannel(ChannelState.Listening(0f), "sound") {
-        SoundListener.listen(getApplication()) { level ->
-            if (_channel.value is ChannelState.Listening) _channel.value = ChannelState.Listening(level)
+        SoundListener.listen(getApplication(), bring.prefs.sound.value) { p ->
+            if (_channel.value is ChannelState.Listening) {
+                _channel.value = ChannelState.Listening(p.level, p.source, p.bands)
+            }
         }
     }
 

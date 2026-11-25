@@ -48,6 +48,8 @@ import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
+import io.github.hipotures.bring.pairing.SoundListener
+import io.github.hipotures.bring.pairing.SoundSettingsPanel
 import io.github.hipotures.bring.storage.StorageAccess
 import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
@@ -120,6 +122,11 @@ fun AppSettingsScreen(vm: AppViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Tm.colors.text2,
             )
+        }
+
+        if (remember { SoundListener.available(context) }) {
+            var soundOpen by rememberSaveable { mutableStateOf(false) }
+            SoundSettingsPanel(expanded = soundOpen, onToggle = { soundOpen = !soundOpen })
         }
 
         Text(versionLine(context), style = Tm.text.code, color = Tm.colors.text2)

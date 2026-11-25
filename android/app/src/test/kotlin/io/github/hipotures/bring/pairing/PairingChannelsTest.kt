@@ -5,6 +5,7 @@ import io.github.hipotures.bring.ffi.SoundReceiver
 import io.github.hipotures.bring.ffi.blePairingPayloadUuid
 import io.github.hipotures.bring.ffi.blePairingServiceUuid
 import io.github.hipotures.bring.ffi.pairingCodeFromBytes
+import io.github.hipotures.bring.ffi.soundLimits
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -37,5 +38,18 @@ class PairingChannelsTest {
             assertEquals(0f, rx.level())
         }
         assertThrows(MoonException.Invalid::class.java) { SoundReceiver(1000u) }
+    }
+
+    @Test fun soundSettingsBuildAValidReceiver() {
+        val limits = soundLimits()
+        assertEquals(listOf(1875u, 18000u), SoundSettings().bandsHz(limits))
+        assertEquals(listOf(limits.maxBandHz), SoundSettings(bands = SoundBands.CUSTOM, customHz = 99_999).bandsHz(limits))
+        for (b in SoundBands.entries) for (d in SoundDetection.entries) {
+            val cfg = SoundSettings(bands = b, detection = d).listenConfig(limits)
+            SoundReceiver.withConfig(SoundListener.SAMPLE_RATE.toUInt(), cfg).use { rx ->
+                assertEquals(cfg.bandsHz.size, rx.takeScores().size)
+            }
+        }
+        assertEquals("18000–20953 Hz", SoundSettings.bandRange(18_000u, limits))
     }
 }

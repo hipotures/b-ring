@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.isValidPairingCode
 import io.github.hipotures.bring.versionLine
@@ -82,6 +83,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     val channel by vm.channel.collectAsStateWithLifecycle()
     val received by vm.received.collectAsStateWithLifecycle()
     val canListen = remember { SoundListener.available(context) }
+    val sound by context.bring.prefs.sound.collectAsStateWithLifecycle()
     val canBluetooth = remember { BlePairingReader.available(context) }
     var heardVia by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(received) {
@@ -202,7 +204,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                             )
                         }
                     }
-                    ChannelStatus(channel)
+                    ChannelStatus(channel, diagnostics = sound.diagnostics)
                     if (channel == ChannelState.Idle && valid) heardVia?.let { InfoLine("Code received over $it.") }
                     OutlinedTextField(
                         value = code,
@@ -222,6 +224,10 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         ),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                if (canListen) {
+                    var soundOpen by rememberSaveable { mutableStateOf(false) }
+                    SoundSettingsPanel(expanded = soundOpen, onToggle = { soundOpen = !soundOpen })
                 }
                 Panel(title = "2. Names") {
                     OutlinedTextField(
@@ -257,7 +263,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
 }
 
 @Composable
-private fun ChannelStatus(channel: ChannelState) {
+private fun ChannelStatus(channel: ChannelState, diagnostics: Boolean) {
     when (channel) {
         ChannelState.Idle -> {}
         is ChannelState.Listening -> {
@@ -267,6 +273,7 @@ private fun ChannelStatus(channel: ChannelState) {
                 color = Tm.colors.text2,
             )
             LevelMeter(channel.level)
+            if (diagnostics && channel.bands.isNotEmpty()) BandScores(channel.bands, channel.source)
         }
         is ChannelState.Bluetooth -> {
             Text(channel.status, style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)
