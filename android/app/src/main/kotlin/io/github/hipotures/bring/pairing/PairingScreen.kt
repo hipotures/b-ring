@@ -85,6 +85,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     val canListen = remember { SoundListener.available(context) }
     val sound by context.bring.prefs.sound.collectAsStateWithLifecycle()
     val lastSound by vm.lastSound.collectAsStateWithLifecycle()
+    val sweepRows by vm.sweep.collectAsStateWithLifecycle()
     val canBluetooth = remember { BlePairingReader.available(context) }
     var heardVia by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(received) {
@@ -206,8 +207,19 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                         }
                     }
                     ChannelStatus(channel, diagnostics = sound.diagnostics)
-                    if (sound.diagnostics && channel !is ChannelState.Listening) {
-                        lastSound?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source) }
+                    if (sound.diagnostics && channel !is ChannelState.Listening && channel !is ChannelState.Sweeping) {
+                        lastSound?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source, it.frames) }
+                    }
+                    if (canListen && sound.diagnostics) {
+                        val sweeping = channel is ChannelState.Sweeping
+                        SharpButton(
+                            if (sweeping) "Stop sweep" else "Sweep mic settings (~50 s)",
+                            onClick = {
+                                if (sweeping) vm.stopChannel() else withPermissions(arrayOf(SoundListener.PERMISSION), vm::sweepMic)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (sweepRows.isNotEmpty()) SweepTable(sweepRows)
                     }
                     if (channel == ChannelState.Idle && valid) heardVia?.let { InfoLine("Code received over $it.") }
                     OutlinedTextField(
@@ -272,12 +284,25 @@ private fun ChannelStatus(channel: ChannelState, diagnostics: Boolean) {
         ChannelState.Idle -> {}
         is ChannelState.Listening -> {
             Text(
-                "Listening… hold the phone near the Ring's speaker.",
+                if (channel.continuous) {
+                    "Listening continuously (diagnostics) until Stop."
+                } else {
+                    "Listening… hold the phone near the Ring's speaker."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Tm.colors.text2,
             )
             LevelMeter(channel.level)
-            if (diagnostics && channel.bands.isNotEmpty()) BandScores(channel.bands, channel.source)
+            if (diagnostics && channel.bands.isNotEmpty()) BandScores(channel.bands, channel.source, channel.frames)
+        }
+        is ChannelState.Sweeping -> {
+            Text(
+                "Sweep ${channel.step}/${channel.total}: ${channel.label}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Tm.colors.text2,
+            )
+            LevelMeter(channel.live.level)
+            if (channel.live.bands.isNotEmpty()) BandScores(channel.live.bands, channel.live.source, channel.live.frames)
         }
         is ChannelState.Bluetooth -> {
             Text(channel.status, style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)

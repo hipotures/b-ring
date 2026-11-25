@@ -51,13 +51,18 @@ object SoundListener {
     }
 
     /** What the microphone hears right now, for the level meter and diagnostics. */
-    data class Progress(val level: Float, val source: String, val bands: List<BandScore>)
+    data class Progress(val level: Float, val source: String, val bands: List<BandScore>, val frames: Int)
 
-    /** Suspends until a pairing code is heard; cancel the coroutine to stop. */
+    /**
+     * Suspends until a pairing code is heard; cancel the coroutine to stop.
+     * With [onCode] it never returns: every decoded frame goes there and
+     * listening goes on (diagnostics).
+     */
     @SuppressLint("MissingPermission") // The caller requests RECORD_AUDIO first.
     suspend fun listen(
         context: Context,
         settings: SoundSettings,
+        onCode: ((String) -> Unit)? = null,
         onProgress: (Progress) -> Unit,
     ): String = withContext(Dispatchers.IO) {
         val receiver = SoundReceiver.withConfig(SAMPLE_RATE.toUInt(), settings.listenConfig(soundLimits()))
@@ -95,12 +100,14 @@ object SoundListener {
             record.startRecording()
             val buf = ByteArray(CHUNK_SAMPLES * 2)
             var code: String? = null
+            var frames = 0
             while (code == null) {
                 coroutineContext.ensureActive()
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) error("Microphone read failed ($n)")
                 if (n == 0) continue
                 code = receiver.pushPcm16(if (n == buf.size) buf else buf.copyOf(n))
+                if (code != null) frames++
                 receiver.takeScores().forEachIndexed { i, s ->
                     // Hold peaks briefly so a 64 ms preamble stays readable.
                     shown[i] = maxOf(s, shown[i] * SCORE_DECAY)
@@ -111,8 +118,13 @@ object SoundListener {
                         receiver.level(),
                         sourceName,
                         bandsHz.mapIndexed { i, hz -> BandScore(hz, shown[i], best[i]) },
+                        frames,
                     ),
                 )
+                if (code != null && onCode != null) {
+                    onCode(code)
+                    code = null
+                }
             }
             code
         } finally {

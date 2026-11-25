@@ -126,7 +126,7 @@ fun SoundSettingsPanel(expanded: Boolean = true, onToggle: (() -> Unit)? = null)
             { set(s.copy(diagnostics = it)) },
             label = { if (it) "On" else "Off" },
         )
-        Hint("Shows how strongly each band hears a frame start while listening.")
+        Hint("Shows how strongly each band hears a frame start, and keeps listening after a code arrives.")
 
         if (!s.isDefault) {
             SharpButton("Reset to defaults", onClick = { set(SoundSettings()) })
@@ -173,11 +173,11 @@ private fun CustomBandField(s: SoundSettings, limits: SoundLimits, set: (SoundSe
  * best so far.
  */
 @Composable
-fun BandScores(bands: List<BandScore>, source: String) {
+fun BandScores(bands: List<BandScore>, source: String, frames: Int) {
     val limits = remember { soundLimits() }
     val threshold = LocalContext.current.bring.prefs.sound.value.detection.threshold(limits)
     Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
-        Label("Diagnostics · mic: $source")
+        Label("Diagnostics · mic: $source · frames decoded: $frames")
         bands.forEach { b ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
                 Text(
@@ -193,6 +193,42 @@ fun BandScores(bands: List<BandScore>, source: String) {
                     color = if (b.best >= threshold) Tm.colors.success else Tm.colors.text2,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Sweep results, one line per mic setting: frames decoded, time to the
+ * first one, peak input level and best score per band. The winner is green.
+ */
+@Composable
+fun SweepTable(rows: List<SweepResult>) {
+    val winner = SweepResult.best(rows)
+    Column(verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
+        Label("Sweep · frames · first · level · best score per band")
+        rows.forEach { r ->
+            val text = r.error?.let { "${r.label}: $it" } ?: buildString {
+                append(r.label.padEnd(18))
+                append(" ${r.frames}fr")
+                append(r.firstMs?.let { String.format(Locale.ROOT, " %4.1fs", it / 1000f) } ?: "    –")
+                append(String.format(Locale.ROOT, " L%.2f", r.peakLevel))
+                r.bands.forEach { b -> append(" ${kHz(b.lowHz)}:" + String.format(Locale.ROOT, "%.2f", b.best)) }
+            }
+            Text(
+                text,
+                style = Tm.text.code,
+                color = when {
+                    r === winner -> Tm.colors.success
+                    r.error != null -> Tm.colors.warning
+                    else -> Tm.colors.text
+                },
+            )
+            if (r.error == null && r.sourceName.isNotEmpty() && r.sourceName != r.source.name.lowercase()) {
+                Text("  (${r.sourceName})", style = Tm.text.code, color = Tm.colors.text2)
+            }
+        }
+        if (winner != null) {
+            Hint("Best: ${winner.label}. Set it under Sound pairing if Auto does worse.")
         }
     }
 }

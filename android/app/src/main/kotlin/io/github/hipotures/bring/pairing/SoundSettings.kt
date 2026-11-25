@@ -73,3 +73,35 @@ data class SoundSettings(
 
 /** One band's detection score for the diagnostics view. */
 data class BandScore(val lowHz: UInt, val score: Float, val best: Float)
+
+/** One mic setting tried by the diagnostics sweep, and what it heard. */
+data class SweepResult(
+    val source: MicSource,
+    val rawProcessing: Boolean,
+    /** The `AudioRecord` source actually used. */
+    val sourceName: String = "",
+    val frames: Int = 0,
+    /** From the start of this step to the first decoded frame. */
+    val firstMs: Long? = null,
+    val peakLevel: Float = 0f,
+    val bands: List<BandScore> = emptyList(),
+    val error: String? = null,
+) {
+    val label: String get() = "${source.label} · ${if (rawProcessing) "proc. off" else "proc. on"}"
+
+    companion object {
+        /** Every explicit source × voice processing (Auto is one of them). */
+        fun combos(): List<Pair<MicSource, Boolean>> =
+            MicSource.entries.filter { it != MicSource.AUTO }.flatMap { s -> listOf(s to true, s to false) }
+
+        /** Most frames, then the fastest first frame, then the best score. */
+        fun best(rows: List<SweepResult>): SweepResult? = rows
+            .filter { it.error == null && it.frames > 0 }
+            .sortedWith(
+                compareByDescending<SweepResult> { it.frames }
+                    .thenBy { it.firstMs ?: Long.MAX_VALUE }
+                    .thenByDescending { r -> r.bands.maxOfOrNull { it.best } ?: 0f },
+            )
+            .firstOrNull()
+    }
+}
