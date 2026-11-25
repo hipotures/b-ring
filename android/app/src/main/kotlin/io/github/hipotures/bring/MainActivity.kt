@@ -32,6 +32,7 @@ import io.github.hipotures.bring.browser.parentOf
 import io.github.hipotures.bring.home.SetupPanel
 import io.github.hipotures.bring.pairing.PairingScreen
 import io.github.hipotures.bring.settings.AppSettingsScreen
+import io.github.hipotures.bring.settings.FolderPicker
 import io.github.hipotures.bring.settings.RingSettingsScreen
 import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.RingBar
@@ -98,6 +99,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var dir by rememberSaveable { mutableStateOf("") }
     var viewing by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickingFolder by rememberSaveable { mutableStateOf(false) }
     val route by vm.route.collectAsStateWithLifecycle()
     val routes by vm.routes.collectAsStateWithLifecycle()
     val sync by vm.sync.collectAsStateWithLifecycle()
@@ -177,7 +179,20 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     onFreeLocal = vm::freeLocal,
                     ringName = active.name,
                     watchedFolders = folders.filter { it.enabled }.map { it.ringFolder },
+                    onAddFolder = {
+                        if (storage) pickingFolder = true else screen = Screen.SETTINGS
+                    },
                 )
+                if (pickingFolder) {
+                    FolderPicker(
+                        watched = folders.map { it.localDir }.toSet(),
+                        onPick = {
+                            pickingFolder = false
+                            vm.addFolder(it)
+                        },
+                        onDismiss = { pickingFolder = false },
+                    )
+                }
             }
             Screen.VIEW -> {
                 TopStrip("", route, sync, onBack = { screen = Screen.HOME })

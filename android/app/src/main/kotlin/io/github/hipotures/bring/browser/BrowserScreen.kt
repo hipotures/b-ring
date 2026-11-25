@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -94,6 +95,8 @@ fun BrowserScreen(
     ringName: String = "Ring",
     /** Watched Ring folder paths (`ringFolder`) so empty watched folders stay visible. */
     watchedFolders: List<String> = emptyList(),
+    /** Quick-add a watched folder from the root breadcrumbs bar. */
+    onAddFolder: (() -> Unit)? = null,
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
@@ -143,7 +146,7 @@ fun BrowserScreen(
             HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
         }
         item {
-            Breadcrumbs(dir, onDir, rootLabel = ringName)
+            Breadcrumbs(dir, onDir, rootLabel = ringName, onAddFolder = onAddFolder)
             RowDivider()
         }
         if (rows.isEmpty()) {
@@ -270,23 +273,37 @@ private fun SelectionBar(
 
 /** The Mechanics `.tm-breadcrumbs` bar on the file-list area, separate from the filter stats. */
 @Composable
-private fun Breadcrumbs(dir: String, onDir: (String) -> Unit, rootLabel: String = "Ring") {
+private fun Breadcrumbs(
+    dir: String,
+    onDir: (String) -> Unit,
+    rootLabel: String = "Ring",
+    onAddFolder: (() -> Unit)? = null,
+) {
     val c = Tm.colors
     Row(
         Modifier
             .fillMaxWidth()
             .background(c.head2)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = TmDimens.space2),
+            .padding(start = TmDimens.space2, end = TmDimens.space1),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (dir.isNotEmpty()) {
-            ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", { onDir(parentOf(dir)) })
+        Row(
+            Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (dir.isNotEmpty()) {
+                ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Up", { onDir(parentOf(dir)) })
+            }
+            Crumb(rootLabel, current = dir.isEmpty()) { onDir("") }
+            crumbs(dir).forEach { (name, path) ->
+                Text("/", style = Tm.text.code, color = c.line2)
+                Crumb(name, current = path == dir) { onDir(path) }
+            }
         }
-        Crumb(rootLabel, current = dir.isEmpty()) { onDir("") }
-        crumbs(dir).forEach { (name, path) ->
-            Text("/", style = Tm.text.code, color = c.line2)
-            Crumb(name, current = path == dir) { onDir(path) }
+        if (dir.isEmpty() && onAddFolder != null) {
+            ActionIcon(Icons.Outlined.Add, "Watch folder", onAddFolder)
         }
     }
 }
