@@ -79,6 +79,8 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         repeat: u32,
     },
+    /// List the audio inputs PipeWire (or ALSA) can record from.
+    Devices,
     /// Listen and print every frame heard on any band of the sweep.
     Rx {
         #[command(flatten)]
@@ -95,8 +97,8 @@ enum Cmd {
         /// Preamble score that counts as a frame (production: 0.45; noise ≈ 0.06).
         #[arg(long, default_value_t = 0.45)]
         threshold: f32,
-        /// Capture device: a pw-record `--target` (node name or id, see
-        /// `wpctl status`) or an arecord `-D` device (see `arecord -L`).
+        /// Capture device (see `sound-probe devices`): a PipeWire node name
+        /// or id, or an arecord `-D` device. Default: the system's default input.
         #[arg(long)]
         device: Option<String>,
     },
@@ -720,6 +722,13 @@ fn rx(
             let (bin, args) = first_available(&recorders)
                 .ok_or("no recorder (pw-record, arecord); record a WAV and pass it as INPUT")?;
             let mut args: Vec<&str> = args.to_vec();
+            let picked;
+            let device = if bin == "pw-record" {
+                picked = pick_pipewire_source(device)?;
+                picked.as_deref()
+            } else {
+                device
+            };
             if let Some(dev) = device {
                 args.extend([if bin == "pw-record" { "--target" } else { "-D" }, dev]);
             }
@@ -747,15 +756,131 @@ fn rx(
             let _ = child.wait();
             if got == 0 {
                 return Err(format!(
-                    "{bin} delivered no audio. Is there a microphone? \
-                     List inputs with `wpctl status` (Sources) or `arecord -L`, \
-                     then pass one with --device"
+                    "{bin} delivered no audio from {}; `sound-probe devices` lists the inputs",
+                    device.unwrap_or("the default input")
                 ));
             }
             if early {
                 eprintln!("sound-probe: {bin} stopped early; summary covers what was heard");
             }
             rcv.summary();
+        }
+    }
+    Ok(())
+}
+
+/// An audio input as PipeWire reports it.
+struct Source {
+    id: u64,
+    name: String,
+    description: String,
+    default: bool,
+}
+
+/// Audio inputs (`media.class = Audio/Source`) from `pw-dump`, or `None`
+/// when PipeWire cannot be queried.
+fn pipewire_sources() -> Option<Vec<Source>> {
+    let out = Command::new("pw-dump")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    parse_sources(&out.stdout)
+}
+
+fn parse_sources(pw_dump: &[u8]) -> Option<Vec<Source>> {
+    let objects: Vec<serde_json::Value> = serde_json::from_slice(pw_dump).ok()?;
+    let default_name = objects
+        .iter()
+        .filter(|o| {
+            o["type"] == "PipeWire:Interface:Metadata" && o["props"]["metadata.name"] == "default"
+        })
+        .flat_map(|o| o["metadata"].as_array().into_iter().flatten())
+        .find(|m| m["key"] == "default.audio.source")
+        .and_then(|m| m["value"]["name"].as_str().map(str::to_owned));
+    Some(
+        objects
+            .iter()
+            .filter(|o| {
+                o["type"] == "PipeWire:Interface:Node"
+                    && o["info"]["props"]["media.class"] == "Audio/Source"
+            })
+            .map(|o| {
+                let props = &o["info"]["props"];
+                let name = props["node.name"].as_str().unwrap_or("?").to_owned();
+                Source {
+                    id: o["id"].as_u64().unwrap_or(0),
+                    description: props["node.description"]
+                        .as_str()
+                        .or(props["node.nick"].as_str())
+                        .unwrap_or(&name)
+                        .to_owned(),
+                    default: default_name.as_deref() == Some(name.as_str()),
+                    name,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// The PipeWire node to record from: `wanted` if it exists, else the default
+/// input, else the only one. Explains what is available when that fails.
+fn pick_pipewire_source(wanted: Option<&str>) -> Result<Option<String>, String> {
+    let Some(sources) = pipewire_sources() else {
+        // pw-dump unavailable: let pw-record decide.
+        return Ok(wanted.map(str::to_owned));
+    };
+    if sources.is_empty() {
+        return Err(
+            "PipeWire reports no audio input at all (no Audio/Source node): \
+                    this machine has no microphone it can see. Plug one in, or record \
+                    on another device and pass the WAV file as INPUT"
+                .into(),
+        );
+    }
+    let chosen = match wanted {
+        Some(w) => sources
+            .iter()
+            .find(|s| s.name == w || s.id.to_string() == w || s.description == w)
+            .ok_or_else(|| {
+                format!(
+                    "no audio input called `{w}`; available:\n{}",
+                    list(&sources)
+                )
+            })?,
+        None => sources.iter().find(|s| s.default).unwrap_or(&sources[0]),
+    };
+    println!("recording from: {} ({})", chosen.description, chosen.name);
+    Ok(Some(chosen.name.clone()))
+}
+
+fn list(sources: &[Source]) -> String {
+    sources
+        .iter()
+        .map(|s| {
+            format!(
+                "{} {:>4}  {}  ({})",
+                if s.default { "*" } else { " " },
+                s.id,
+                s.description,
+                s.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn devices() -> Result<(), String> {
+    match pipewire_sources() {
+        Some(s) if s.is_empty() => println!("PipeWire: no audio inputs."),
+        Some(s) => println!("PipeWire audio inputs (* = default):\n{}", list(&s)),
+        None => {
+            let out = Command::new("arecord")
+                .arg("-l")
+                .output()
+                .map_err(|_| "neither pw-dump nor arecord is available")?;
+            print!("{}", String::from_utf8_lossy(&out.stdout));
         }
     }
     Ok(())
@@ -807,6 +932,7 @@ fn stream(src: &mut dyn Read, rcv: &mut Receiver, deadline: Option<Instant>) -> 
 fn main() {
     let result = match Cli::parse().cmd {
         Cmd::Tx { sweep, wav, repeat } => tx(&sweep, wav.as_deref(), repeat),
+        Cmd::Devices => devices(),
         Cmd::Rx {
             sweep,
             input,
@@ -847,6 +973,33 @@ mod tests {
         let e = expected(256);
         assert!(printable(&e).starts_with("B-RING 12000Hz "));
         assert!(e.iter().all(|b| (0x20..0x7f).contains(b)));
+    }
+
+    #[test]
+    fn parses_pw_dump_sources() {
+        let dump = br#"[
+          {"id": 31, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Sink", "node.name": "out"}}},
+          {"id": 42, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.name": "alsa_input.usb-cam",
+            "node.description": "Webcam Mic"}}},
+          {"id": 43, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.name": "alsa_input.pci"}}},
+          {"id": 0, "type": "PipeWire:Interface:Metadata", "props": {"metadata.name": "default"},
+           "metadata": [{"subject": 0, "key": "default.audio.source", "type": "Spa:String:JSON",
+                         "value": {"name": "alsa_input.pci"}}]}
+        ]"#;
+        let s = parse_sources(dump).unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            (s[0].id, s[0].description.as_str(), s[0].default),
+            (42, "Webcam Mic", false)
+        );
+        assert_eq!(
+            (s[1].description.as_str(), s[1].default),
+            ("alsa_input.pci", true)
+        );
+        assert!(parse_sources(b"[]").unwrap().is_empty());
     }
 
     #[test]
