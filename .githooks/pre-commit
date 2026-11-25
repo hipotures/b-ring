@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Auto-bump [workspace.package] version in Cargo.toml to <major>.<minor>.<commits+1>
+# on every normal commit so `cargo install` always shows the real build number.
+set -euo pipefail
+
+GIT_DIR="$(git rev-parse --git-dir)"
+if [ -f "$GIT_DIR/MERGE_HEAD" ] || [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ] || [ -f "$GIT_DIR/CHERRY_PICK_HEAD" ]; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CARGO_TOML="$REPO_ROOT/Cargo.toml"
+[ -f "$CARGO_TOML" ] || exit 0
+
+COUNT="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+NEXT="$((COUNT + 1))"
+
+CURRENT="$(awk '
+    /^\[workspace\.package\]/ { in_ws = 1; next }
+    /^\[/ { in_ws = 0 }
+    in_ws && /^version[[:space:]]*=/ {
+        gsub(/.*"|".*/, "")
+        print
+        exit
+    }
+' "$CARGO_TOML")"
+
+[ -n "$CURRENT" ] || exit 0
+MAJOR_MINOR="$(printf '%s' "$CURRENT" | awk -F. '{ print $1 "." $2 }')"
+TARGET="${MAJOR_MINOR}.${NEXT}"
+
+if [ "$CURRENT" != "$TARGET" ]; then
+    python3 -c '
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
+target = sys.argv[2]
+text = p.read_text()
+out, n = re.subn(
+    r"(?ms)(^\[workspace\.package\][^\[]*?^version\s*=\s*\")[^\"]+(\")",
+    rf"\g<1>{target}\g<2>",
+    text,
+    count=1,
+)
+assert n == 1, "could not find [workspace.package] version in Cargo.toml"
+p.write_text(out)
+' "$CARGO_TOML" "$TARGET"
+    cargo update --workspace --offline --manifest-path "$CARGO_TOML" >/dev/null
+    git add "$CARGO_TOML" "$REPO_ROOT/Cargo.lock"
+fi
