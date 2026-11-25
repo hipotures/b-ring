@@ -23,6 +23,7 @@ pub enum ErrorCode {
     Rejected,
     TooManyAttempts,
     RangeNotSatisfiable,
+    InsufficientStorage,
     Internal,
 }
 

@@ -769,8 +769,9 @@ impl Moon {
                 Err(e) => {
                     report.failed += 1;
                     store::record_failure(&self.db(), job.entry.id, &e.to_string(), now_secs())?;
-                    // The Ring is unreachable: the rest would fail the same way.
-                    if matches!(e, MoonError::Network { .. }) {
+                    // The Ring is unreachable or out of disk space: the rest
+                    // would fail the same way.
+                    if matches!(e, MoonError::Network { .. } | MoonError::Server { status: 507, .. }) {
                         break;
                     }
                 }

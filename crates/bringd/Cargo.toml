@@ -29,6 +29,7 @@ notify-debouncer-full.workspace = true
 notify-rust.workspace = true
 rcgen.workspace = true
 rusqlite.workspace = true
+rustix.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true

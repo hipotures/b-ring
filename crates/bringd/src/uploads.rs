@@ -49,15 +49,18 @@ pub struct Uploads {
     pub root: PathBuf,
     pub staging: PathBuf,
     pub db: Db,
+    /// Minimum free disk space percentage on `root`'s filesystem (`1..=99`).
+    pub min_free_percent: u8,
     locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl Uploads {
-    pub fn new(root: PathBuf, staging: PathBuf, db: Db) -> Self {
+    pub fn new(root: PathBuf, staging: PathBuf, db: Db, min_free_percent: u8) -> Self {
         Self {
             root,
             staging,
             db,
+            min_free_percent: min_free_percent.clamp(1, 99),
             locks: Arc::default(),
         }
     }
@@ -239,6 +242,52 @@ fn hash_mismatch(message: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, ErrorCode::HashMismatch, message)
 }
 
+/// True when `avail` minus `incoming` still leaves at least `min_free_percent`%
+/// of `total` free.
+pub(crate) fn has_enough_space(
+    total_bytes: u128,
+    avail_bytes: u128,
+    incoming_bytes: u64,
+    min_free_percent: u8,
+) -> bool {
+    if total_bytes == 0 {
+        return true;
+    }
+    let min_pct = u128::from(min_free_percent.clamp(1, 99));
+    let avail_after = avail_bytes.saturating_sub(u128::from(incoming_bytes));
+    avail_after.saturating_mul(100) >= total_bytes.saturating_mul(min_pct)
+}
+
+fn check_disk_space(root: &Path, incoming_bytes: u64, min_free_percent: u8) -> Result<(), ApiError> {
+    let st = rustix::fs::statvfs(root).map_err(|e| ApiError::internal(io::Error::from(e)))?;
+    let frsize = u128::from(st.f_frsize);
+    let total = u128::from(st.f_blocks).saturating_mul(frsize);
+    let avail = u128::from(st.f_bavail).saturating_mul(frsize);
+    if !has_enough_space(total, avail, incoming_bytes, min_free_percent) {
+        let free_pct = if total > 0 {
+            (avail as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        warn!(
+            free_pct = format_args!("{free_pct:.1}%"),
+            min_free_percent,
+            avail_bytes = avail,
+            total_bytes = total,
+            incoming_bytes,
+            "upload rejected: insufficient disk space"
+        );
+        return Err(ApiError::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            ErrorCode::InsufficientStorage,
+            format!(
+                "insufficient disk space on Ring: {free_pct:.1}% free (need at least {min_free_percent}% free)"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Create / status
 // ---------------------------------------------------------------------------
@@ -286,7 +335,8 @@ pub fn create(
         return Ok((false, CreateUploadResponse::Exists { ack }));
     }
 
-    // 3. Resume an active upload.
+    // 3. Resume an active upload (still check disk space before accepting more).
+    check_disk_space(&up.root, req.size, up.min_free_percent)?;
     let active: Option<UploadRow> = conn
         .query_row(
             &format!(
@@ -398,6 +448,7 @@ pub fn put_chunk(
     if actual != claimed {
         return Err(hash_mismatch(format!("chunk {index} hash mismatch")));
     }
+    check_disk_space(&up.root, body.len() as u64, up.min_free_percent)?;
     // Retries simply overwrite the same range: idempotent.
     let f = OpenOptions::new()
         .write(true)
@@ -717,5 +768,19 @@ mod tests {
         assert!(!valid_upload_id("../../etc/passwd"));
         assert!(!valid_upload_id(&id.to_uppercase()));
         assert!(!valid_upload_id(&id[..35]));
+    }
+
+    #[test]
+    fn disk_space_threshold() {
+        let total = 1_000_000u128;
+        // Exactly at 5% free after upload: allowed.
+        assert!(has_enough_space(total, 60_000, 10_000, 5));
+        // 1 byte below 5% free after upload: rejected.
+        assert!(!has_enough_space(total, 60_000, 10_001, 5));
+        // Minimum 1% enforced even if caller passed 0.
+        assert!(has_enough_space(total, 10_000, 0, 0));
+        assert!(!has_enough_space(total, 9_999, 0, 0));
+        // Incoming larger than available: rejected.
+        assert!(!has_enough_space(total, 50_000, 100_000, 1));
     }
 }

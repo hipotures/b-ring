@@ -34,6 +34,9 @@ pub struct Config {
     pub debounce_ms: u64,
     /// `ffmpeg` binary for video/HEIC thumbnails (optional at runtime).
     pub ffmpeg: PathBuf,
+    /// Minimum free disk space percentage on the `ring_root` filesystem
+    /// required to accept uploads (`1..=99`; defaults to 5%).
+    pub min_free_percent: u8,
 }
 
 impl Default for Config {
@@ -51,6 +54,7 @@ impl Default for Config {
             folders: Vec::new(),
             debounce_ms: 2000,
             ffmpeg: PathBuf::from("ffmpeg"),
+            min_free_percent: 5,
         }
     }
 }
@@ -67,6 +71,8 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    #[error("invalid config {path}: {message}")]
+    Invalid { path: PathBuf, message: String },
 }
 
 impl Config {
@@ -87,10 +93,15 @@ impl Config {
                 });
             }
         };
-        Self::parse(&text).map_err(|source| ConfigError::Parse {
+        let cfg = Self::parse(&text).map_err(|source| ConfigError::Parse {
             path: path.to_owned(),
             source,
-        })
+        })?;
+        cfg.validate().map_err(|message| ConfigError::Invalid {
+            path: path.to_owned(),
+            message,
+        })?;
+        Ok(cfg)
     }
 
     pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
@@ -98,6 +109,16 @@ impl Config {
         cfg.ring_root = expand_home(&cfg.ring_root);
         cfg.data_dir = expand_home(&cfg.data_dir);
         Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=99).contains(&self.min_free_percent) {
+            return Err(format!(
+                "min_free_percent must be between 1 and 99 (got {})",
+                self.min_free_percent
+            ));
+        }
+        Ok(())
     }
 
     pub fn debounce(&self) -> Duration {
@@ -153,6 +174,16 @@ mod tests {
         assert!(c.ring_root.ends_with("B-Ring"));
         assert!(c.folders.is_empty());
         assert!(!c.notifications);
+        assert_eq!(c.min_free_percent, 5);
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn min_free_percent_validation() {
+        assert!(Config::parse("min_free_percent = 0").unwrap().validate().is_err());
+        assert!(Config::parse("min_free_percent = 100").unwrap().validate().is_err());
+        assert!(Config::parse("min_free_percent = 1").unwrap().validate().is_ok());
+        assert!(Config::parse("min_free_percent = 99").unwrap().validate().is_ok());
     }
 
     #[test]

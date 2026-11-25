@@ -94,7 +94,7 @@ impl Ring {
             config.wan_url.clone(),
             std::time::Duration::from_secs(config.pairing_ttl_secs),
         );
-        let uploads = Uploads::new(root.clone(), staging, db.clone());
+        let uploads = Uploads::new(root.clone(), staging, db.clone(), config.min_free_percent);
         uploads
             .check_hard_links()
             .map_err(|source| StartError::NoHardLinks {
