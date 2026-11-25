@@ -161,7 +161,9 @@ fun FolderPicker(watched: Set<String>, onPick: (String) -> Unit, onDismiss: () -
                     list == null -> item { Note("Reading…") }
                     list.isEmpty() -> item { Note("No subfolders.") }
                     else -> items(list, key = { it.path }) { f ->
-                        DirRow(f.name, watched = f.path in watched) { path = f.path }
+                        val isWatched = f.path in watched
+                        val hasWatchedChild = !isWatched && watched.any { it.startsWith("${f.path}/") }
+                        DirRow(f.name, watched = isWatched, hasWatchedChild = hasWatchedChild) { path = f.path }
                         RowDivider()
                     }
                 }
@@ -207,12 +209,18 @@ private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DirRow(name: String, up: Boolean = false, watched: Boolean = false, onClick: () -> Unit) {
+private fun DirRow(
+    name: String,
+    up: Boolean = false,
+    watched: Boolean = false,
+    hasWatchedChild: Boolean = false,
+    onClick: () -> Unit,
+) {
     val c = Tm.colors
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.surface)
+            .background(if (hasWatchedChild) c.successSoft else c.surface)
             .clickable(onClick = onClick)
             .heightIn(min = 56.dp)
             .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space2),
@@ -222,7 +230,7 @@ private fun DirRow(name: String, up: Boolean = false, watched: Boolean = false, 
             if (up) Icons.Outlined.KeyboardArrowUp else FolderGlyph,
             null,
             Modifier.size(TmDimens.iconLg),
-            tint = c.text2,
+            tint = if (hasWatchedChild) c.success else c.text2,
         )
         Spacer(Modifier.width(TmDimens.space4))
         Text(
