@@ -163,13 +163,13 @@ fun RingBar(
                 .height(56.dp)
                 .padding(start = TmDimens.space3, end = TmDimens.space1),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
         ) {
             Column(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clickable(onClick = onActivity),
+                    .clickable(onClick = onActivity)
+                    .padding(end = TmDimens.space2),
                 verticalArrangement = Arrangement.Center,
             ) {
                 val (headline, headlineColor) = when {
