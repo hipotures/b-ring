@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -247,7 +248,9 @@ private fun ResultRow(text: String, mark: PlateMark, detail: String, onClick: ((
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(TmDimens.space3),
     ) {
-        StatusPlate(text, mark, modifier = Modifier.weight(1f, fill = false))
+        Box(Modifier.weight(1f)) {
+            StatusPlate(text, mark)
+        }
         if (detail.isNotEmpty()) {
             Text(detail, style = Tm.text.numeric, color = Tm.colors.text2, maxLines = 1)
         }
