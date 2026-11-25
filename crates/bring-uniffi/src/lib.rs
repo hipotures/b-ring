@@ -560,7 +560,9 @@ impl Moon {
     }
 
     /// Watches `local_dir` for `ring_id`. Multiple Rings may watch the same
-    /// `local_dir`. The default Ring folder is `<basename>/<device_slug>`.
+    /// `local_dir`. The default Ring folder is `<device_slug>/<relative_path>`
+    /// (stripping standard Android shared-storage roots such as
+    /// `/storage/emulated/0/`, or falling back to `<device_slug>/<basename>`).
     pub fn add_watched_folder_for(
         &self,
         ring_id: String,
@@ -575,13 +577,7 @@ impl Moon {
         }
         let ring_folder = match ring_folder {
             Some(f) => f,
-            None => {
-                let base = dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .ok_or_else(|| MoonError::invalid("local_dir has no name"))?;
-                format!("{base}/{}", ring.device_slug)
-            }
+            None => default_ring_folder(&ring.device_slug, &local_dir)?,
         };
         let ring_folder = RelPath::new(&ring_folder)
             .map_err(|e| MoonError::invalid(format!("ring folder {ring_folder:?}: {e}")))?;
@@ -962,5 +958,62 @@ impl Moon {
     pub fn stream_url(&self, file_id: i64) -> Result<String, MoonError> {
         let ring = self.default_ring_row()?;
         self.stream_url_for(ring.ring_id_hex(), file_id)
+    }
+}
+
+/// Strips standard Android shared-storage prefixes so watched paths mirror the
+/// phone's relative directory tree under `<device_slug>/...`.
+fn strip_android_storage_root(local_dir: &str) -> Option<&str> {
+    if let Some(rest) = local_dir.strip_prefix("/storage/emulated/") {
+        let (user, tail) = rest.split_once('/')?;
+        if !user.is_empty() && user.bytes().all(|b| b.is_ascii_digit()) {
+            return Some(tail.trim_matches('/'));
+        }
+    }
+    for prefix in ["/storage/self/primary/", "/sdcard/"] {
+        if let Some(tail) = local_dir.strip_prefix(prefix) {
+            return Some(tail.trim_matches('/'));
+        }
+    }
+    None
+}
+
+fn default_ring_folder(device_slug: &str, local_dir: &str) -> Result<String, MoonError> {
+    let suffix = match strip_android_storage_root(local_dir) {
+        Some(rel) if !rel.is_empty() => rel,
+        _ => Path::new(local_dir)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| MoonError::invalid("local_dir has no name"))?,
+    };
+    Ok(format!("{device_slug}/{suffix}"))
+}
+
+#[cfg(test)]
+mod default_folder_tests {
+    use super::*;
+
+    #[test]
+    fn device_first_default_ring_folders() {
+        assert_eq!(
+            default_ring_folder("sm-s918b", "/storage/emulated/0/Download").unwrap(),
+            "sm-s918b/Download"
+        );
+        assert_eq!(
+            default_ring_folder(
+                "sm-s918b",
+                "/storage/emulated/0/DCIM/BackgroundVideoRecorder/Videos"
+            )
+            .unwrap(),
+            "sm-s918b/DCIM/BackgroundVideoRecorder/Videos"
+        );
+        assert_eq!(
+            default_ring_folder("sm-g781b", "/sdcard/Download/0test").unwrap(),
+            "sm-g781b/Download/0test"
+        );
+        assert_eq!(
+            default_ring_folder("fake-moon", "/tmp/phone/DCIM").unwrap(),
+            "fake-moon/DCIM"
+        );
     }
 }

@@ -247,8 +247,8 @@ fn fake_moon_full_cycle() {
         .add_watched_folder(dcim.to_str().unwrap().into(), None)
         .unwrap();
     assert_eq!(
-        folder.ring_folder, "DCIM/fake-moon",
-        "per-device subfolder (§5)"
+        folder.ring_folder, "fake-moon/DCIM",
+        "device-first folder layout"
     );
 
     // --- Upload, interrupted after 3 chunks ------------------------------------
@@ -256,10 +256,10 @@ fn fake_moon_full_cycle() {
     let err = moon.run_sync(Some(first.clone())).unwrap_err();
     assert!(matches!(err, MoonError::Cancelled), "{err}");
     assert!(video.exists(), "nothing deleted without an ACK");
-    let pending = moon.entries(Some("DCIM".into())).unwrap();
+    let pending = moon.entries(Some("fake-moon".into())).unwrap();
     let v = pending
         .iter()
-        .find(|e| e.ring_path == "DCIM/fake-moon/Camera/VID_0001.mp4")
+        .find(|e| e.ring_path == "fake-moon/DCIM/Camera/VID_0001.mp4")
         .unwrap();
     assert_eq!(v.state, EntryState::LocalOnly);
     assert!(v.upload_pending);
@@ -293,16 +293,16 @@ fn fake_moon_full_cycle() {
     // --- ACK → remote-only ---------------------------------------------------
     assert!(!video.exists(), "offloaded after a verified ACK");
     assert!(photo.exists(), "small files stay (threshold 100 MiB)");
-    let on_ring = d.join("ring/DCIM/fake-moon/Camera/VID_0001.mp4");
+    let on_ring = d.join("ring/fake-moon/DCIM/Camera/VID_0001.mp4");
     assert_eq!(hash_file(&on_ring).unwrap(), (big_hash, BIG as u64));
 
     let all = moon.entries(None).unwrap();
     let by_path = |p: &str| all.iter().find(|e| e.ring_path == p).unwrap().clone();
-    let v = by_path("DCIM/fake-moon/Camera/VID_0001.mp4");
+    let v = by_path("fake-moon/DCIM/Camera/VID_0001.mp4");
     assert_eq!(v.state, EntryState::RemoteOnly);
     assert_eq!(v.local_path, None);
     assert!(!v.upload_pending);
-    let p = by_path("DCIM/fake-moon/Camera/IMG_0001.jpg");
+    let p = by_path("fake-moon/DCIM/Camera/IMG_0001.jpg");
     assert_eq!(p.state, EntryState::Synced);
     let desk = by_path("Download/desktop.pdf");
     assert_eq!(desk.state, EntryState::RemoteOnly, "desktop files show up");
@@ -382,7 +382,7 @@ fn fake_moon_full_cycle() {
         .enqueue_upload(photo.to_str().unwrap().into(), "Inbox/late.txt".into())
         .unwrap();
     assert_eq!(
-        again.ring_path, "DCIM/fake-moon/Camera/IMG_0001.jpg",
+        again.ring_path, "fake-moon/DCIM/Camera/IMG_0001.jpg",
         "already tracked"
     );
     let share2 = d.join("share/late2.txt");
@@ -394,9 +394,9 @@ fn fake_moon_full_cycle() {
     moon.run_sync(None).unwrap();
 
     // --- Desktop deletes a synced file: the phone keeps its copy (§5.1) -------
-    std::fs::remove_file(d.join("ring/DCIM/fake-moon/Camera/IMG_0001.jpg")).unwrap();
+    std::fs::remove_file(d.join("ring/fake-moon/DCIM/Camera/IMG_0001.jpg")).unwrap();
     wait_until("Ring tombstones the photo", || {
-        ring_seq(d, "DCIM/fake-moon/Camera/IMG_0001.jpg", true).is_some()
+        ring_seq(d, "fake-moon/DCIM/Camera/IMG_0001.jpg", true).is_some()
     });
     let r = moon.run_sync(None).unwrap();
     assert_eq!(r.outbox, Default::default(), "not uploaded again: {r:?}");
