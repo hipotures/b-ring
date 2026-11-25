@@ -206,7 +206,13 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
             }
             Screen.ACTIVITY -> {
                 TopStrip("Sync activity", route = null, sync = sync, onBack = { screen = Screen.HOME })
-                ActivityScreen(rounds, lastChecked, p.rings, entries)
+                ActivityScreen(
+                    rounds,
+                    lastChecked,
+                    p.rings,
+                    entries,
+                    activeRingName = p.rings.firstOrNull { it.ringId == p.activeRingId }?.name.orEmpty(),
+                )
             }
             Screen.SETTINGS -> {
                 TopStrip("Settings", route = null, sync = sync, onBack = { screen = Screen.HOME })

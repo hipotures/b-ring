@@ -521,6 +521,24 @@ val FolderGlyph: ImageVector by lazy {
     }.build()
 }
 
+/** [FolderGlyph] with a plus inside: "add a watched folder", distinct from the bare Add Ring `+`. */
+val NewFolderGlyph: ImageVector by lazy {
+    ImageVector.Builder("new_folder", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineJoin = StrokeJoin.Miter) {
+            moveTo(3f, 5f)
+            lineTo(10f, 5f)
+            lineTo(12f, 7.5f)
+            lineTo(21f, 7.5f)
+            lineTo(21f, 19f)
+            lineTo(3f, 19f)
+            close()
+            // Plus, centred in the folder body
+            moveTo(9f, 13.25f); lineTo(15f, 13.25f)
+            moveTo(12f, 10.25f); lineTo(12f, 16.25f)
+        }
+    }.build()
+}
+
 /** Text fields: `inset` well, `lineInput` frame, `ink` when focused (no accent ring). */
 @Composable
 fun tmFieldColors() = Tm.colors.let { c ->

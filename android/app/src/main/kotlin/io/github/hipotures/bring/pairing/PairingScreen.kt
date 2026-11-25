@@ -26,6 +26,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -84,7 +87,11 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     ) {
         Text("Pair with a Ring", style = MaterialTheme.typography.headlineMedium, color = Tm.colors.text)
         Text(
-            "Run `bring pair` on the Ring. Scan its QR code, or type the code printed under it.",
+            buildAnnotatedString {
+                append("Run ")
+                withStyle(SpanStyle(fontFamily = Tm.text.code.fontFamily)) { append("bring pair") }
+                append(" on the Ring. Scan its QR code, or type the code printed under it.")
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = Tm.colors.text2,
         )
@@ -115,7 +122,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                                     .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                                     .setBeepEnabled(false)
                                     .setOrientationLocked(false)
-                                    .setPrompt("Scan the code shown by `bring pair`"),
+                                    .setPrompt("Scan the QR code shown by “bring pair” on the Ring"),
                             )
                         },
                         modifier = Modifier.fillMaxWidth(),

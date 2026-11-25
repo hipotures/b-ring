@@ -46,13 +46,19 @@ import themechanics.compose.TmTone
 
 /** Sync history: one record per round, newest first; tap a record for its files. */
 @Composable
-fun ActivityScreen(rounds: List<SyncRound>, lastChecked: Long, rings: List<RingInfo>, entries: List<Entry>) {
+fun ActivityScreen(
+    rounds: List<SyncRound>,
+    lastChecked: Long,
+    rings: List<RingInfo>,
+    entries: List<Entry>,
+    activeRingName: String,
+) {
     val c = Tm.colors
     var open by rememberSaveable { mutableStateOf<Long?>(null) }
     val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
-            TransferSummary(totals)
+            TransferSummary(totals, activeRingName)
             HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
         item {
@@ -137,7 +143,7 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Global cumulative remote transfer across all paired Rings, plus queued count. */
+/** Global cumulative remote transfer across all paired Rings, plus the active Ring's queued count. */
 private data class TransferTotals(
     val files: Long,
     val bytes: Long,
@@ -167,15 +173,18 @@ private data class TransferTotals(
 
 /**
  * Global cumulative transfer to remote Rings: total uploaded file count and
- * total transferred size, plus a queued line when uploads are waiting.
+ * total transferred size, plus a queued line when uploads are waiting. The
+ * totals span all Rings while the queue is the active Ring's, so both are
+ * labelled with their scope.
  */
 @Composable
-private fun TransferSummary(t: TransferTotals) {
+private fun TransferSummary(t: TransferTotals, activeRingName: String) {
     val c = Tm.colors
     Column(
         Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space3),
         verticalArrangement = Arrangement.spacedBy(TmDimens.space2),
     ) {
+        Text("ALL RINGS", style = Tm.text.eyebrow, color = c.text2)
         Row(
             Modifier
                 .fillMaxWidth()
@@ -203,7 +212,11 @@ private fun TransferSummary(t: TransferTotals) {
             Row(horizontalArrangement = Arrangement.spacedBy(TmDimens.space2), verticalAlignment = Alignment.CenterVertically) {
                 Tag("Queued", TmTone.Pending)
                 Text(
-                    "${t.queuedFiles} ${if (t.queuedFiles == 1) "file" else "files"} · ${formatBytes(t.queuedBytes)}",
+                    listOfNotNull(
+                        "${t.queuedFiles} ${if (t.queuedFiles == 1) "file" else "files"}",
+                        formatBytes(t.queuedBytes),
+                        activeRingName.ifEmpty { null },
+                    ).joinToString(" · "),
                     style = Tm.text.numeric,
                     color = c.text,
                 )

@@ -32,7 +32,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +61,7 @@ import io.github.hipotures.bring.media.extensionOf
 import io.github.hipotures.bring.media.kindOf
 import io.github.hipotures.bring.ui.BadgeChip
 import io.github.hipotures.bring.ui.FileIcons
+import io.github.hipotures.bring.ui.NewFolderGlyph
 import io.github.hipotures.bring.ui.FolderGlyph
 import io.github.hipotures.bring.ui.RowDivider
 import io.github.hipotures.bring.ui.Segmented
@@ -304,7 +304,7 @@ private fun Breadcrumbs(
             }
         }
         if (dir.isEmpty() && onAddFolder != null) {
-            ActionIcon(Icons.Outlined.Add, "Watch folder", onAddFolder)
+            ActionIcon(NewFolderGlyph, "Watch folder", onAddFolder)
         }
     }
 }

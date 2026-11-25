@@ -11,7 +11,7 @@ fun Throwable.describe(): String = when (this) {
     is MoonException.Pairing -> "Pairing failed: $detail"
     is MoonException.PairingPending -> "Waiting for approval on the Ring"
     is MoonException.PairingRejected -> "Pairing was rejected on the Ring"
-    is MoonException.PairingExpired -> "Pairing session expired; run `bring pair` again"
+    is MoonException.PairingExpired -> "Pairing session expired; run “bring pair” again"
     is MoonException.Storage -> "Storage: $detail"
     is MoonException.Invalid -> detail
     is MoonException.Cancelled -> "Cancelled"
