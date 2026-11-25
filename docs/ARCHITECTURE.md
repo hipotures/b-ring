@@ -465,7 +465,10 @@ as soon as a Moon reaches the SAS step.
     and app settings) tunes the bands (low + high / low / high / custom Hz),
     the detection threshold (sensitive 0.30 / default 0.45 / strict 0.60),
     the mic source (auto / raw / voice / mic / camera) and the voice
-    processing. It can also show live per-band scores while listening.
+    processing. A **Sound test** panel in the app settings listens without
+    pairing and without stopping at a code: live per-band scores, frames
+    decoded, and a sweep over every mic source × voice processing (6 s each)
+    with a table of frames, time to the first frame, level and scores.
     One-way: Linux needs no microphone, so this works on Meta Quest 3.
 - **BLE** (`bring-core::pairing::ble`):
   - The Ring registers a GATT application (one primary service, one

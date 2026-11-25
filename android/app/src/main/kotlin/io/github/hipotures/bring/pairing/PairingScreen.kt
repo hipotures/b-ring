@@ -45,7 +45,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.isValidPairingCode
 import io.github.hipotures.bring.versionLine
@@ -83,9 +82,6 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
     val channel by vm.channel.collectAsStateWithLifecycle()
     val received by vm.received.collectAsStateWithLifecycle()
     val canListen = remember { SoundListener.available(context) }
-    val sound by context.bring.prefs.sound.collectAsStateWithLifecycle()
-    val lastSound by vm.lastSound.collectAsStateWithLifecycle()
-    val sweepRows by vm.sweep.collectAsStateWithLifecycle()
     val canBluetooth = remember { BlePairingReader.available(context) }
     var heardVia by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(received) {
@@ -206,21 +202,7 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
                             )
                         }
                     }
-                    ChannelStatus(channel, diagnostics = sound.diagnostics)
-                    if (sound.diagnostics && channel !is ChannelState.Listening && channel !is ChannelState.Sweeping) {
-                        lastSound?.takeIf { it.bands.isNotEmpty() }?.let { BandScores(it.bands, it.source, it.frames) }
-                    }
-                    if (canListen && sound.diagnostics) {
-                        val sweeping = channel is ChannelState.Sweeping
-                        SharpButton(
-                            if (sweeping) "Stop sweep" else "Sweep mic settings (~50 s)",
-                            onClick = {
-                                if (sweeping) vm.stopChannel() else withPermissions(arrayOf(SoundListener.PERMISSION), vm::sweepMic)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (sweepRows.isNotEmpty()) SweepTable(sweepRows)
-                    }
+                    ChannelStatus(channel)
                     if (channel == ChannelState.Idle && valid) heardVia?.let { InfoLine("Code received over $it.") }
                     OutlinedTextField(
                         value = code,
@@ -279,30 +261,16 @@ fun PairingScreen(onPaired: (RingInfo) -> Unit, vm: PairingViewModel = viewModel
 }
 
 @Composable
-private fun ChannelStatus(channel: ChannelState, diagnostics: Boolean) {
+private fun ChannelStatus(channel: ChannelState) {
     when (channel) {
         ChannelState.Idle -> {}
         is ChannelState.Listening -> {
             Text(
-                if (channel.continuous) {
-                    "Listening continuously (diagnostics) until Stop."
-                } else {
-                    "Listening… hold the phone near the Ring's speaker."
-                },
+                "Listening… hold the phone near the Ring's speaker.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Tm.colors.text2,
             )
             LevelMeter(channel.level)
-            if (diagnostics && channel.bands.isNotEmpty()) BandScores(channel.bands, channel.source, channel.frames)
-        }
-        is ChannelState.Sweeping -> {
-            Text(
-                "Sweep ${channel.step}/${channel.total}: ${channel.label}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Tm.colors.text2,
-            )
-            LevelMeter(channel.live.level)
-            if (channel.live.bands.isNotEmpty()) BandScores(channel.live.bands, channel.live.source, channel.live.frames)
         }
         is ChannelState.Bluetooth -> {
             Text(channel.status, style = MaterialTheme.typography.bodyMedium, color = Tm.colors.text2)
@@ -314,7 +282,7 @@ private fun ChannelStatus(channel: ChannelState, diagnostics: Boolean) {
 
 /** Microphone input level: square bar on a `line3` track (RMS, square-root scale). */
 @Composable
-private fun LevelMeter(level: Float) {
+internal fun LevelMeter(level: Float) {
     val fraction = (kotlin.math.sqrt(level.coerceAtLeast(0f)) * 2f).coerceIn(0f, 1f)
     Box(
         Modifier

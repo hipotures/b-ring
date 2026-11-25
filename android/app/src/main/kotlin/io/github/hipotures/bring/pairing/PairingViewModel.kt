@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface PairState {
     data object Idle : PairState
@@ -29,20 +28,8 @@ sealed interface PairState {
 /** A code channel other than the camera or the keyboard (sound, Bluetooth). */
 sealed interface ChannelState {
     data object Idle : ChannelState
-    /**
-     * [level] is the microphone RMS in `[0, 1]`; [source] the `AudioRecord`
-     * source in use; [bands] the per-band detection scores (diagnostics).
-     */
-    data class Listening(
-        val level: Float,
-        val source: String = "",
-        val bands: List<BandScore> = emptyList(),
-        /** Frames decoded so far; > 1 only in continuous (diagnostics) mode. */
-        val frames: Int = 0,
-        val continuous: Boolean = false,
-    ) : ChannelState
-    /** Diagnostics sweep: step [step] of [total] ([label]), live meter in [live]. */
-    data class Sweeping(val step: Int, val total: Int, val label: String, val live: Listening) : ChannelState
+    /** [level] is the microphone RMS in `[0, 1]`. */
+    data class Listening(val level: Float) : ChannelState
     data class Bluetooth(val status: String) : ChannelState
     data class Failed(val message: String) : ChannelState
 }
@@ -62,79 +49,13 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
     private val _received = MutableStateFlow<ReceivedCode?>(null)
     val received: StateFlow<ReceivedCode?> = _received.asStateFlow()
     private var channelJob: Job? = null
-    /** Last sound diagnostics, kept after "Listen" ends so they can be read. */
-    private val _lastSound = MutableStateFlow<ChannelState.Listening?>(null)
-    val lastSound: StateFlow<ChannelState.Listening?> = _lastSound.asStateFlow()
 
     /** Listens for `bring pair --sound` (RECORD_AUDIO must be granted). */
-    fun listen() {
-        val settings = bring.prefs.sound.value
-        // Diagnostics: keep listening after a code arrives, until Stop.
-        val continuous = settings.diagnostics
-        runChannel(ChannelState.Listening(0f, continuous = continuous), "sound") {
-            _lastSound.value = null
-            SoundListener.listen(
-                getApplication(),
-                settings,
-                onCode = if (continuous) ({ _received.value = ReceivedCode(it, "sound") }) else null,
-            ) { p ->
-                if (_channel.value is ChannelState.Listening) {
-                    val now = ChannelState.Listening(p.level, p.source, p.bands, p.frames, continuous)
-                    _channel.value = now
-                    _lastSound.value = now
-                }
+    fun listen() = runChannel(ChannelState.Listening(0f), "sound") {
+        SoundListener.listen(getApplication(), bring.prefs.sound.value) { p ->
+            if (_channel.value is ChannelState.Listening) {
+                _channel.value = ChannelState.Listening(p.level)
             }
-        }
-    }
-
-    private val _sweep = MutableStateFlow<List<SweepResult>>(emptyList())
-    /** Results of the last diagnostics sweep (partial if stopped). */
-    val sweep: StateFlow<List<SweepResult>> = _sweep.asStateFlow()
-
-    /**
-     * Tries every mic source × voice processing for [SWEEP_STEP_MS] each,
-     * listening on the configured bands without stopping at a code.
-     */
-    fun sweepMic() {
-        channelJob?.cancel()
-        val base = bring.prefs.sound.value
-        val combos = SweepResult.combos()
-        _sweep.value = emptyList()
-        channelJob = viewModelScope.launch {
-            combos.forEachIndexed { i, (source, raw) ->
-                var row = SweepResult(source, raw)
-                _channel.value = ChannelState.Sweeping(i + 1, combos.size, row.label, ChannelState.Listening(0f))
-                val started = System.currentTimeMillis()
-                try {
-                    withTimeoutOrNull(SWEEP_STEP_MS) {
-                        SoundListener.listen(
-                            getApplication(),
-                            base.copy(source = source, rawProcessing = raw),
-                            onCode = { code ->
-                                _received.value = ReceivedCode(code, "sound")
-                                if (row.firstMs == null) row = row.copy(firstMs = System.currentTimeMillis() - started)
-                            },
-                        ) { p ->
-                            row = row.copy(
-                                sourceName = p.source,
-                                frames = p.frames,
-                                peakLevel = maxOf(row.peakLevel, p.level),
-                                bands = p.bands,
-                            )
-                            _channel.value = ChannelState.Sweeping(
-                                i + 1, combos.size, row.label,
-                                ChannelState.Listening(p.level, p.source, p.bands, p.frames, true),
-                            )
-                        }
-                    }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    row = row.copy(error = e.message ?: e.toString())
-                }
-                _sweep.value = _sweep.value + row
-            }
-            _channel.value = ChannelState.Idle
         }
     }
 
@@ -244,7 +165,5 @@ class PairingViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val POLL_SECS = 5u
         const val MAX_NETWORK_ERRORS = 10
-        /** ~3 frames of a repeating beacon (1.86 s each). */
-        const val SWEEP_STEP_MS = 6_000L
     }
 }

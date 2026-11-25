@@ -47,8 +47,6 @@ data class SoundSettings(
     val source: MicSource = MicSource.AUTO,
     /** Switch off echo cancellation, noise suppression and AGC (they smear tones). */
     val rawProcessing: Boolean = true,
-    /** Per-band detection scores on the pairing screen. */
-    val diagnostics: Boolean = false,
 ) {
     val isDefault: Boolean get() = this == SoundSettings()
 

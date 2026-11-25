@@ -49,7 +49,6 @@ class Prefs(context: Context) {
             putString(SOUND_DETECTION, s.detection.name)
             putString(SOUND_SOURCE, s.source.name)
             putBoolean(SOUND_RAW, s.rawProcessing)
-            putBoolean(SOUND_DIAGNOSTICS, s.diagnostics)
         }
         _sound.value = s
     }
@@ -63,7 +62,6 @@ class Prefs(context: Context) {
                 ?: d.detection,
             source = MicSource.entries.firstOrNull { it.name == sp.getString(SOUND_SOURCE, null) } ?: d.source,
             rawProcessing = sp.getBoolean(SOUND_RAW, d.rawProcessing),
-            diagnostics = sp.getBoolean(SOUND_DIAGNOSTICS, d.diagnostics),
         )
     }
 
@@ -94,6 +92,5 @@ class Prefs(context: Context) {
         const val SOUND_DETECTION = "sound_detection"
         const val SOUND_SOURCE = "sound_source"
         const val SOUND_RAW = "sound_raw_processing"
-        const val SOUND_DIAGNOSTICS = "sound_diagnostics"
     }
 }

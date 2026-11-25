@@ -47,8 +47,9 @@ private fun kHz(hz: UInt) = String.format(Locale.ROOT, "%.1f", hz.toFloat() / 10
 
 /**
  * Advanced settings of "Listen": bands, detection threshold, microphone
- * source, voice processing and diagnostics. Shown on the pairing screen
- * (folded) and in the app settings; both edit the same [SoundSettings].
+ * source and voice processing. Shown on the pairing screen (folded) and in
+ * the app settings; both edit the same [SoundSettings]. The Sound test
+ * panel in the app settings measures them.
  */
 @Composable
 fun SoundSettingsPanel(expanded: Boolean = true, onToggle: (() -> Unit)? = null) {
@@ -118,15 +119,6 @@ fun SoundSettingsPanel(expanded: Boolean = true, onToggle: (() -> Unit)? = null)
             label = { if (it) "Off" else "Phone default" },
         )
         Hint("Echo cancellation, noise suppression and gain control smear tones; keep them off.")
-
-        Label("Diagnostics")
-        Segmented(
-            listOf(false, true),
-            s.diagnostics,
-            { set(s.copy(diagnostics = it)) },
-            label = { if (it) "On" else "Off" },
-        )
-        Hint("Shows how strongly each band hears a frame start, and keeps listening after a code arrives.")
 
         if (!s.isDefault) {
             SharpButton("Reset to defaults", onClick = { set(SoundSettings()) })
