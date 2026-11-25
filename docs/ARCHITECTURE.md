@@ -427,9 +427,22 @@ as soon as a Moon reaches the SAS step.
 
 - **Sound** (`bring-core::pairing::acoustic`, ggwave-style, pure Rust, used by
   both ends):
-  - 48 kHz, 4 parallel bands × 16 tones, 46.875 Hz spacing, 1875–4828 Hz.
-    The audible band is far more reliable than ultrasound on phone and laptop
-    hardware.
+  - 48 kHz, 4 parallel sub-bands × 16 tones, 46.875 Hz spacing, spanning
+    2953 Hz. Two standard bands:
+    - **Low** (default): 1875–4828 Hz, classic rendering at full level.
+      Audible, works on any speaker and microphone.
+    - **High** (`--sound-band high`): 18000–20953 Hz, smooth rendering at
+      −25 dB. Inaudible to most adults. Field tests on an S20 FE: the mic
+      port resonance peaks at 18–20 kHz, the ADC cuts at ~22 kHz, and frames
+      decoded at 3 m down to −40 dB. Room reverb, not the level, causes most
+      errors, so louder is not better.
+    - `--sound-band <Hz>` puts the lowest tone anywhere in 1000–21000 Hz
+      (rounded to a 46.875 Hz step).
+  - Rendering: *classic* has 5 ms raised-cosine edges per symbol; *smooth*
+    (`--sound-style smooth`) keeps continuous phase and glides 10 ms between
+    tones at the symbol boundaries, outside the decoder window, so there are
+    no clicks. `--sound-volume <dB>` (−60…0) sets the level; the defaults
+    follow the band (bands ≥ 15 kHz get the high-band settings).
   - 64 ms symbols (2 bytes each) with 5 ms raised-cosine edges. The decoder's
     2048-sample Hann window skips the first 16 ms of each symbol, so most
     echo of the previous symbol falls outside it.
@@ -438,14 +451,21 @@ as soon as a Moon reaches the SAS step.
     bytes, and the CRC rejects the rare miscorrection. About 17 B/s of payload.
   - The decoder is streaming and amplitude-independent: each band's winner
     is judged against that band's own energy, so there is no AGC. Any
-    16–192 kHz input is resampled to 48 kHz.
+    16–192 kHz input is resampled to 48 kHz. It searches several bands at
+    once (default: low and high), decodes the best-scoring passing band
+    first, and reports each band's peak preamble score for diagnostics.
   - The CLI links no audio library. The WAV holds the token, so it is a
     `0600` file in the `0700` runtime directory and is removed when the
     beacon stops. `--wav FILE` saves it to play on another device.
   - Android records from `UNPROCESSED` when the device supports it, and from
     `VOICE_RECOGNITION` otherwise. It disables `AcousticEchoCanceler`,
     `NoiseSuppressor` and `AutomaticGainControl` on the session.
-    It needs `RECORD_AUDIO`.
+    It needs `RECORD_AUDIO`. "Listen" searches both standard bands, so the
+    Ring alone picks one. A folded **Sound pairing** panel (pairing screen
+    and app settings) tunes the bands (low + high / low / high / custom Hz),
+    the detection threshold (sensitive 0.30 / default 0.45 / strict 0.60),
+    the mic source (auto / raw / voice / mic / camera) and the voice
+    processing. It can also show live per-band scores while listening.
     One-way: Linux needs no microphone, so this works on Meta Quest 3.
 - **BLE** (`bring-core::pairing::ble`):
   - The Ring registers a GATT application (one primary service, one
