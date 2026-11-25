@@ -141,6 +141,12 @@ impl Band {
     }
 }
 
+impl Default for Band {
+    fn default() -> Self {
+        Self::LOW
+    }
+}
+
 impl std::fmt::Display for Band {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}–{} Hz", self.low_hz(), self.high_hz())

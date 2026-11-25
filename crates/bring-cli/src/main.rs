@@ -40,6 +40,7 @@ enum Command {
 
 /// Extra pairing channels; the QR code and the text code are always shown.
 #[derive(clap::Args, Default)]
+#[command(group = clap::ArgGroup::new("sound_out").args(["sound", "wav"]).multiple(true))]
 struct PairArgs {
     /// Also play the code as sound, on repeat (the app's "Listen").
     #[arg(long)]
@@ -50,6 +51,75 @@ struct PairArgs {
     /// Write the sound to a WAV file (to play it on another device).
     #[arg(long, value_name = "FILE")]
     wav: Option<PathBuf>,
+    /// Sound band: `low` (1875–4828 Hz, audible, works with any speaker),
+    /// `high` (18000–20953 Hz, inaudible to most adults; needs a speaker
+    /// that reaches 21 kHz) or the lowest tone in Hz (1000–21000, the band
+    /// spans ~3 kHz above it). The app listens on low and high by default;
+    /// other bands need its advanced sound settings.
+    #[arg(long, value_name = "BAND", default_value = "low", value_parser = parse_band, requires = "sound_out")]
+    sound_band: acoustic::Band,
+    /// Sound level in dB relative to full level (-60..0). Default: 0 for
+    /// bands below 15 kHz, -25 above.
+    #[arg(long, value_name = "DB", allow_negative_numbers = true, value_parser = parse_volume, requires = "sound_out")]
+    sound_volume: Option<f32>,
+    /// Tone transitions: `classic` (5 ms edges per symbol) or `smooth`
+    /// (continuous phase, no clicks). Default: classic below 15 kHz,
+    /// smooth above.
+    #[arg(long, value_name = "STYLE", value_enum, requires = "sound_out")]
+    sound_style: Option<SoundStyle>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum SoundStyle {
+    Classic,
+    Smooth,
+}
+
+/// Bands starting at or above this are treated as near-ultrasound: quieter
+/// and smooth by default.
+const QUIET_BAND_HZ: u32 = 15_000;
+
+fn parse_band(s: &str) -> Result<acoustic::Band, String> {
+    match s {
+        "low" => Ok(acoustic::Band::LOW),
+        "high" => Ok(acoustic::Band::HIGH),
+        hz => hz
+            .parse::<u32>()
+            .ok()
+            .and_then(acoustic::Band::from_hz)
+            .ok_or_else(|| {
+                format!(
+                    "expected low, high or a frequency in {}..={} Hz",
+                    acoustic::BAND_HZ_RANGE.start(),
+                    acoustic::BAND_HZ_RANGE.end()
+                )
+            }),
+    }
+}
+
+fn parse_volume(s: &str) -> Result<f32, String> {
+    s.parse::<f32>()
+        .ok()
+        .filter(|v| acoustic::VOLUME_DB_RANGE.contains(v))
+        .ok_or_else(|| "expected a level in dB between -60 and 0".into())
+}
+
+impl PairArgs {
+    fn tx_params(&self) -> acoustic::TxParams {
+        let quiet = self.sound_band.low_hz() >= QUIET_BAND_HZ;
+        let default = if quiet {
+            acoustic::TxParams::high()
+        } else {
+            acoustic::TxParams::low()
+        };
+        acoustic::TxParams {
+            band: self.sound_band,
+            smooth: self
+                .sound_style
+                .map_or(default.smooth, |s| s == SoundStyle::Smooth),
+            volume_db: self.sound_volume.unwrap_or(default.volume_db),
+        }
+    }
 }
 
 /// Channels that carry the code while `bring pair` waits for a Moon.
@@ -66,7 +136,8 @@ impl Beacons {
         let payload = BootstrapPayload::from_text(text).map_err(|e| e.to_string())?;
         let mut beacons = Self::default();
         if args.sound || args.wav.is_some() {
-            let wav = acoustic::encode_wav(&payload);
+            let params = args.tx_params();
+            let wav = acoustic::encode_wav_with(&payload, &params);
             if let Some(path) = &args.wav {
                 sound::write_private(path, &wav)
                     .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -78,7 +149,12 @@ impl Beacons {
             if args.sound {
                 match sound::SoundBeacon::start(&wav) {
                     Ok(b) => {
-                        println!("Playing the code as sound (\"Listen\" in the app).");
+                        println!(
+                            "Playing the code as sound in {}, {:+.0} dB, {} (\"Listen\" in the app).",
+                            params.band,
+                            params.volume_db,
+                            if params.smooth { "smooth" } else { "classic" }
+                        );
                         beacons.sound = Some(b);
                     }
                     Err(e) => eprintln!("bring: sound: {e}"),
@@ -389,6 +465,45 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair_args(argv: &[&str]) -> PairArgs {
+        let mut full = vec!["bring", "pair"];
+        full.extend_from_slice(argv);
+        match Cli::try_parse_from(full).unwrap().command {
+            Command::Pair(a) => a,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn sound_defaults_follow_the_band() {
+        let low = pair_args(&["--sound"]).tx_params();
+        assert_eq!(low, acoustic::TxParams::low());
+        let high = pair_args(&["--sound", "--sound-band", "high"]).tx_params();
+        assert_eq!(high, acoustic::TxParams::high());
+        let custom = pair_args(&[
+            "--wav",
+            "x.wav",
+            "--sound-band",
+            "12000",
+            "--sound-volume",
+            "-6",
+            "--sound-style",
+            "smooth",
+        ])
+        .tx_params();
+        assert_eq!(custom.band.low_hz(), 12_000);
+        assert!(custom.smooth && custom.volume_db == -6.0);
+        let loud_high = pair_args(&["--sound", "--sound-band", "19000", "--sound-volume", "0"]);
+        assert!(loud_high.tx_params().smooth && loud_high.tx_params().volume_db == 0.0);
+    }
+
+    #[test]
+    fn sound_options_need_a_sound_output() {
+        assert!(Cli::try_parse_from(["bring", "pair", "--sound-band", "high"]).is_err());
+        assert!(Cli::try_parse_from(["bring", "pair", "--ble"]).is_ok());
+        assert!(Cli::try_parse_from(["bring", "pair", "--sound", "--sound-band", "900"]).is_err());
+    }
 
     #[test]
     fn qr_is_black_on_white_with_a_light_quiet_zone() {
