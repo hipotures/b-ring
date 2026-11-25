@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "bring-cli"
-version = "0.1.93"
+version = "0.1.94"
 dependencies = [
  "bring-core",
  "clap",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "bring-core"
-version = "0.1.93"
+version = "0.1.94"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "bring-uniffi"
-version = "0.1.93"
+version = "0.1.94"
 dependencies = [
  "bring-core",
  "getrandom 0.4.3",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "bringd"
-version = "0.1.93"
+version = "0.1.94"
 dependencies = [
  "axum",
  "axum-server",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "sound-probe"
-version = "0.1.93"
+version = "0.1.94"
 dependencies = [
  "clap",
 ]

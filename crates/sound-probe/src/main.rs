@@ -95,6 +95,10 @@ enum Cmd {
         /// Preamble score that counts as a frame (production: 0.45; noise ≈ 0.06).
         #[arg(long, default_value_t = 0.45)]
         threshold: f32,
+        /// Capture device: a pw-record `--target` (node name or id, see
+        /// `wpctl status`) or an arecord `-D` device (see `arecord -L`).
+        #[arg(long)]
+        device: Option<String>,
     },
 }
 
@@ -669,6 +673,7 @@ fn rx(
     rate: u32,
     seconds: Option<u64>,
     threshold: f32,
+    device: Option<&str>,
 ) -> Result<(), String> {
     let bins = sweep.first_bins()?;
     println!(
@@ -705,7 +710,7 @@ fn rx(
             let recorders: [(&str, &[&str]); 2] = [
                 (
                     "pw-record",
-                    &["--rate", &rate_s, "--channels", "1", "--format", "s16", "-"],
+                    &["--rate", &rate_s, "--channels", "1", "--format", "s16"],
                 ),
                 (
                     "arecord",
@@ -714,6 +719,13 @@ fn rx(
             ];
             let (bin, args) = first_available(&recorders)
                 .ok_or("no recorder (pw-record, arecord); record a WAV and pass it as INPUT")?;
+            let mut args: Vec<&str> = args.to_vec();
+            if let Some(dev) = device {
+                args.extend([if bin == "pw-record" { "--target" } else { "-D" }, dev]);
+            }
+            if bin == "pw-record" {
+                args.push("-");
+            }
             let limit =
                 Duration::from_secs(seconds.unwrap_or(bins.len() as u64 * sweep.dwell as u64 + 30));
             println!(
@@ -728,19 +740,34 @@ fn rx(
                 .map_err(|e| format!("{bin}: {e}"))?;
             let mut out = child.stdout.take().unwrap();
             let mut rcv = Receiver::new(RATE, &bins, threshold);
-            stream(&mut out, &mut rcv, Some(Instant::now() + limit));
+            let deadline = Instant::now() + limit;
+            let got = stream(&mut out, &mut rcv, Some(deadline));
+            let early = Instant::now() < deadline;
             let _ = child.kill();
             let _ = child.wait();
+            if got == 0 {
+                return Err(format!(
+                    "{bin} delivered no audio. Is there a microphone? \
+                     List inputs with `wpctl status` (Sources) or `arecord -L`, \
+                     then pass one with --device"
+                ));
+            }
+            if early {
+                eprintln!("sound-probe: {bin} stopped early; summary covers what was heard");
+            }
             rcv.summary();
         }
     }
     Ok(())
 }
 
-/// Feeds raw s16le PCM from `src` until EOF or `deadline`.
-fn stream(src: &mut dyn Read, rcv: &mut Receiver, deadline: Option<Instant>) {
+/// Feeds raw s16le PCM from `src` until EOF or `deadline`; prints the input
+/// level every 5 s of audio. Returns the number of bytes read.
+fn stream(src: &mut dyn Read, rcv: &mut Receiver, deadline: Option<Instant>) -> u64 {
+    const LEVEL_EVERY: u64 = 5 * RATE as u64;
     let mut buf = vec![0u8; 9600];
     let mut carry: Option<u8> = None;
+    let (mut total, mut seen, mut peak, mut sq) = (0u64, 0u64, 0f32, 0f64);
     loop {
         if deadline.is_some_and(|d| Instant::now() >= d) {
             break;
@@ -756,8 +783,25 @@ fn stream(src: &mut dyn Read, rcv: &mut Receiver, deadline: Option<Instant>) {
             carry = bytes.pop();
         }
         let samples: Vec<f32> = pcm16(&bytes).collect();
+        total += n as u64;
+        for &x in &samples {
+            peak = peak.max(x.abs());
+            sq += (x * x) as f64;
+            seen += 1;
+            if seen % LEVEL_EVERY == 0 {
+                let db = |v: f64| 20.0 * v.max(1e-9).log10();
+                println!(
+                    "[{:>7.1} s] input level: peak {:>6.1} dBFS, rms {:>6.1} dBFS",
+                    seen as f64 / RATE as f64,
+                    db(peak as f64),
+                    db((sq / LEVEL_EVERY as f64).sqrt())
+                );
+                (peak, sq) = (0.0, 0.0);
+            }
+        }
         rcv.push(&samples);
     }
+    total
 }
 
 fn main() {
@@ -769,7 +813,15 @@ fn main() {
             rate,
             seconds,
             threshold,
-        } => rx(&sweep, input.as_deref(), rate, seconds, threshold),
+            device,
+        } => rx(
+            &sweep,
+            input.as_deref(),
+            rate,
+            seconds,
+            threshold,
+            device.as_deref(),
+        ),
     };
     if let Err(e) = result {
         eprintln!("sound-probe: {e}");
