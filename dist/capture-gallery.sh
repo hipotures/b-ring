@@ -10,7 +10,6 @@
 # Defaults:
 #   -s  first connected device from `$ADB_BIN devices` (or `$ADB_PHONE_IP:5555` if set in .env)
 #   -o  docs/screenshots
-#   --force  skip the active-sync and external-mouse checks
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     -o|--out)    OUT_DIR="$2"; shift 2 ;;
     --force)     FORCE=1; shift ;;
     -h|--help)
-      sed -n '2,13p' "$0"
+      sed -n '2,12p' "$0"
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -65,22 +64,6 @@ if [[ "$FORCE" -eq 0 ]]; then
   active_sync="$(adb_dev shell dumpsys notification --noredact | grep -c 'NotificationRecord.*io\.github\.hipotures\.bring' || true)"
   if [[ "$active_sync" -gt 0 ]]; then
     echo "Refusing to run on $SERIAL: active sync/upload notification detected (use --force to override)." >&2
-    exit 1
-  fi
-fi
-
-# A connected mouse (USB/Bluetooth, or scrcpy --mouse=uhid/aoa) draws its
-# pointer into screencap output. Built-in touchpads report IsExternal: false.
-if [[ "$FORCE" -eq 0 ]]; then
-  ext_mice="$(adb_dev shell dumpsys input | awk '
-    /^  Device [0-9]+:/ { sub(/^  Device [0-9]+: /, ""); name = $0; ext = 0; next }
-    /^    IsExternal: true/ { ext = 1; next }
-    /^    Sources:/ && ext && /MOUSE/ { print "  " name }
-  ' | sort -u)"
-  if [[ -n "$ext_mice" ]]; then
-    echo "Refusing to run on $SERIAL: an external pointer device is connected and its cursor would appear in the screenshots:" >&2
-    echo "$ext_mice" >&2
-    echo "Disconnect it (or restart scrcpy without mouse forwarding) and re-run, or use --force." >&2
     exit 1
   fi
 fi
