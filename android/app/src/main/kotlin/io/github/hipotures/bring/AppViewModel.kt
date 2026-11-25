@@ -143,7 +143,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             networkChanged.debounce(1_000).collect { probeAllRoutes() }
         }
         viewModelScope.launch { trackRounds() }
-        viewModelScope.launch { syncFinished.collect { loadEntries() } }
+        viewModelScope.launch {
+            syncFinished.collect {
+                loadEntries()
+                reloadRings()
+            }
+        }
         // Reload once a round starts (so newly scanned local files appear while
         // large files are still hashing) and as uploads move from file to file.
         viewModelScope.launch {
@@ -275,6 +280,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val id = ringId ?: activeRingId() ?: return@launch
             runCatching { bring.moon.entriesFor(id, null) }.onSuccess { list ->
                 if (activeRingId() == id) _entries.value = list
+            }
+        }
+    }
+
+    private fun reloadRings() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cur = _pairing.value as? Pairing.Paired ?: return@launch
+            val fresh = runCatching { bring.moon.rings() }.getOrDefault(emptyList())
+                .filter { bring.tokens.load(it.ringId) != null }
+            if (fresh.isNotEmpty()) {
+                val active = cur.activeRingId.takeIf { id -> fresh.any { it.ringId == id } }
+                    ?: fresh.first().ringId
+                _pairing.value = Pairing.Paired(fresh, active)
             }
         }
     }
@@ -447,6 +465,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         bring.moon.removeWatchedFolder(folderId)
         val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
         if (activeRingId() == id) _folders.value = list
+        loadEntries(id)
         null
     }
 

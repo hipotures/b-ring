@@ -311,7 +311,7 @@ fn walk(root: &Path, unreadable: &mut Vec<PathBuf>) -> Vec<Found> {
     out
 }
 
-fn is_under(path: &str, dir: &Path) -> bool {
+pub(crate) fn is_under(path: &str, dir: &Path) -> bool {
     Path::new(path).starts_with(dir)
 }
 
@@ -391,21 +391,45 @@ pub(crate) fn apply_scan(
         }
     }
 
-    // Tracked local files for this Ring that disappeared (§5.2).
-    let tracked: Vec<(i64, String, FileState)> = {
+    // Tracked local files for this Ring that disappeared (§5.2) or belong to
+    // a folder that is no longer watched (auto-prune orphaned local/held rows
+    // without ever touching files on disk).
+    let watched_roots: Vec<&Path> = folders
+        .iter()
+        .filter(|f| f.enabled)
+        .map(|f| Path::new(f.local_dir.as_str()))
+        .collect();
+    let tracked: Vec<(i64, String, FileState, bool)> = {
         let mut stmt = tx.prepare(
-            "SELECT id, local_path, state FROM entries
+            "SELECT id, local_path, state, suppressed
+             FROM entries
              WHERE ring_id = ?1 AND local_path IS NOT NULL",
         )?;
-        stmt.query_map([ring_db_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<Result<_, _>>()?
+        stmt.query_map([ring_db_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0))
+        })?
+        .collect::<Result<_, _>>()?
     };
-    for (id, local, state) in tracked {
+    for (id, local, state, suppressed) in tracked {
         if seen.contains(&local) || unavailable.iter().any(|d| is_under(&local, d)) {
             continue;
         }
-        if local_stat(Path::new(&local))?.is_some() {
-            continue; // outside watched folders, still there
+        let under_watched = watched_roots.iter().any(|r| is_under(&local, r));
+        if !under_watched {
+            // Outside all watched folders: auto-prune `Held` (`local-only` +
+            // `suppressed`) leftovers whose Ring copy was deleted, while
+            // keeping explicit Share uploads (`suppressed == false`) and
+            // still-synced entries whose local file exists.
+            if state == FileState::LocalOnly && suppressed {
+                tx.execute("DELETE FROM entries WHERE id = ?1", [id])?;
+                report.gone += 1;
+                continue;
+            }
+            if local_stat(Path::new(&local))?.is_some() {
+                continue; // still exists (synced copy or pending share upload)
+            }
+        } else if local_stat(Path::new(&local))?.is_some() {
+            continue;
         }
         report.gone += 1;
         match state {
@@ -906,7 +930,7 @@ impl Moon {
             Sent::Uploaded(a) => (a, true),
             Sent::Deduplicated(a) => (a, false),
         };
-        let decision = self.apply_ack(s, job, &ack)?;
+        let decision = self.apply_ack(s, job, &ack, uploaded)?;
         Ok(JobOutcome {
             sent: uploaded,
             decision,
@@ -1037,7 +1061,13 @@ impl Moon {
     }
 
     /// The retention rule (§3.5 step 5). Database first, then the delete.
-    fn apply_ack(&self, s: &Session, job: &Job, ack: &UploadAck) -> Result<Decision, MoonError> {
+    fn apply_ack(
+        &self,
+        s: &Session,
+        job: &Job,
+        ack: &UploadAck,
+        uploaded: bool,
+    ) -> Result<Decision, MoonError> {
         let path = Path::new(&job.local);
         let current = local_stat(path)?;
         let mut decision = offload::decide(
@@ -1107,6 +1137,15 @@ impl Moon {
                     job.entry.ring_path.as_str()
                 };
                 let synced = decision == Decision::KeepSynced;
+                if uploaded {
+                    tx.execute(
+                        "UPDATE rings
+                         SET transferred_files = transferred_files + 1,
+                             transferred_bytes = transferred_bytes + ?1
+                         WHERE id = ?2",
+                        params![ack.size, s.ring.id],
+                    )?;
+                }
                 tx.execute(
                     "UPDATE entries SET state = ?1, local_path = ?2, ring_path = ?3,
                        remote_file_id = ?4, blake3 = ?5, size = ?6

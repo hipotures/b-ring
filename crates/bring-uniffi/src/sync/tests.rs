@@ -357,6 +357,70 @@ fn shared_folder_keeps_local_file_until_all_rings_verify_it() {
 }
 
 #[test]
+fn unwatched_local_and_held_entries_are_pruned_without_deleting_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let watched = tmp.path().join("Watched");
+    let unwatched = tmp.path().join("OldFolder");
+    let share = tmp.path().join("Share");
+    fs::create_dir_all(&watched).unwrap();
+    fs::create_dir_all(&unwatched).unwrap();
+    fs::create_dir_all(&share).unwrap();
+
+    let kept_held = watched.join("keep.jpg");
+    let orphan_held = unwatched.join("old.jpg");
+    let still_synced = unwatched.join("still_on_ring.jpg");
+    let pending_share = share.join("shared.txt");
+    for p in [&kept_held, &orphan_held, &still_synced, &pending_share] {
+        fs::write(p, b"data").unwrap();
+    }
+
+    let mut c = db();
+    // 1. Held entry inside a still-watched folder: MUST stay (never re-uploaded).
+    synced(&c, "Watched/phone/keep.jpg", kept_held.to_str().unwrap(), b"data", 1);
+    apply_index_entry(&c, RING_1, &remote(1, "Watched/phone/keep.jpg", b"", true)).unwrap();
+
+    // 2. Held entry from a removed watched folder whose server copy was deleted: MUST be pruned.
+    synced(&c, "OldFolder/phone/old.jpg", orphan_held.to_str().unwrap(), b"data", 2);
+    apply_index_entry(&c, RING_1, &remote(2, "OldFolder/phone/old.jpg", b"", true)).unwrap();
+
+    // 3. Synced entry from a removed watched folder whose server copy still exists: MUST stay.
+    synced(
+        &c,
+        "OldFolder/phone/still_on_ring.jpg",
+        still_synced.to_str().unwrap(),
+        b"data",
+        3,
+    );
+
+    // 4. Explicit Share upload outside watched folders (queued in outbox): MUST stay.
+    let share_id = store::insert_local(
+        &c,
+        RING_1,
+        "Inbox/shared.txt",
+        pending_share.to_str().unwrap(),
+        4,
+        1,
+        None,
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns) VALUES (?1, 4, 1)",
+        [share_id],
+    )
+    .unwrap();
+
+    let r = apply_scan(&mut c, RING_1, &[folder(&watched, "Watched/phone")]).unwrap();
+    assert_eq!(r.gone, 1);
+
+    assert!(get(&c, "Watched/phone/keep.jpg").is_some(), "watched Held stays");
+    assert!(get(&c, "OldFolder/phone/old.jpg").is_none(), "unwatched Held pruned");
+    assert!(get(&c, "OldFolder/phone/still_on_ring.jpg").is_some(), "still synced stays");
+    assert!(get(&c, "Inbox/shared.txt").is_some(), "queued share stays");
+    // Auto-prune never deletes files from phone storage.
+    assert!(orphan_held.exists());
+}
+
+#[test]
 fn looks_thumbable_matches_images_and_videos_only() {
     assert!(looks_thumbable(Some("video/mp4"), "a/b.mp4"));
     assert!(looks_thumbable(Some("image/jpeg"), "a/b.jpg"));

@@ -18,6 +18,7 @@ const RING_MIGRATIONS: &[&str] = &[include_str!("ring/0001_init.sql")];
 const MOON_MIGRATIONS: &[&str] = &[
     include_str!("moon/0001_init.sql"),
     include_str!("moon/0002_multi_ring.sql"),
+    include_str!("moon/0003_transfer_stats.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -284,7 +285,7 @@ mod tests {
         let v: u32 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, latest_version(Role::Moon));
 
         let wf_ring: i64 = conn
             .query_row("SELECT ring_id FROM watched_folders WHERE id = 10", [], |r| r.get(0))

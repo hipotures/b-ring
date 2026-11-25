@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hipotures.bring.AppViewModel
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
+import io.github.hipotures.bring.formatBytes
 import io.github.hipotures.bring.storage.StorageAccess
 import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
@@ -123,6 +124,11 @@ fun SettingsScreen(
             KeyValue("Name", ring.name)
             KeyValue("Device", ring.deviceSlug)
             KeyValue("Device ID", ring.deviceId.take(8))
+            KeyValue(
+                "Transferred",
+                "${ring.transferredFiles} ${if (ring.transferredFiles == 1UL) "file" else "files"} · " +
+                    formatBytes(ring.transferredBytes.toLong()),
+            )
             KeyValue("Ring ID", ring.ringId.take(16))
             KeyValue("LAN", ring.lanUrl)
             KeyValue("WAN", ring.wanUrl ?: "— (LAN only)")

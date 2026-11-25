@@ -99,6 +99,10 @@ pub struct RingInfo {
     pub device_id: String,
     /// Per-Ring offload threshold in bytes (`None` = default 100 MiB, `u64::MAX` = Never).
     pub offload_threshold_bytes: Option<u64>,
+    /// Cumulative files transferred to this Ring (aggregate counter, survives pruning).
+    pub transferred_files: u64,
+    /// Cumulative bytes transferred to this Ring (aggregate counter, survives pruning).
+    pub transferred_bytes: u64,
 }
 
 impl From<&store::RingRow> for RingInfo {
@@ -113,6 +117,8 @@ impl From<&store::RingRow> for RingInfo {
             device_slug: r.device_slug.clone(),
             device_id: hex_encode(&r.device_uuid),
             offload_threshold_bytes: r.offload_threshold_bytes,
+            transferred_files: r.transferred_files,
+            transferred_bytes: r.transferred_bytes,
         }
     }
 }
@@ -606,8 +612,46 @@ impl Moon {
     }
 
     pub fn remove_watched_folder(&self, id: i64) -> Result<(), MoonError> {
-        self.db()
-            .execute("DELETE FROM watched_folders WHERE id = ?1", [id])?;
+        let mut db = self.db();
+        let tx = db.transaction()?;
+        let removed: Option<(i64, String)> = {
+            use rusqlite::OptionalExtension;
+            tx.query_row(
+                "SELECT ring_id, local_dir FROM watched_folders WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+        };
+        tx.execute("DELETE FROM watched_folders WHERE id = ?1", [id])?;
+        if let Some((ring_db_id, local_dir)) = removed {
+            let remaining: Vec<String> = store::watched_folders(&tx, ring_db_id)?
+                .into_iter()
+                .filter(|f| f.enabled)
+                .map(|f| f.local_dir)
+                .collect();
+            let candidates: Vec<(i64, String)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, local_path FROM entries
+                     WHERE ring_id = ?1 AND state = 'local-only' AND local_path IS NOT NULL",
+                )?;
+                stmt.query_map([ring_db_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<Result<_, _>>()?
+            };
+            let removed_root = Path::new(&local_dir);
+            for (entry_id, local_path) in candidates {
+                if sync::is_under(&local_path, removed_root)
+                    && !remaining
+                        .iter()
+                        .any(|dir| sync::is_under(&local_path, Path::new(dir)))
+                {
+                    // Auto-prune local-only/held/queued entries from the
+                    // unwatched folder without touching local files on disk.
+                    tx.execute("DELETE FROM entries WHERE id = ?1", [entry_id])?;
+                }
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 

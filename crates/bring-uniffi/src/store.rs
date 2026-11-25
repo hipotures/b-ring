@@ -20,6 +20,10 @@ pub struct RingRow {
     pub device_slug: String,
     /// `None` = engine default (100 MiB); `Some(u64::MAX)` = never offload.
     pub offload_threshold_bytes: Option<u64>,
+    /// Cumulative files ever transferred to this Ring (survives deletion/pruning).
+    pub transferred_files: u64,
+    /// Cumulative bytes ever transferred to this Ring (survives deletion/pruning).
+    pub transferred_bytes: u64,
 }
 
 impl RingRow {
@@ -48,7 +52,7 @@ impl RingRow {
 }
 
 const RING_COLS: &str = "id, ring_id, name, lan_url, wan_url, tls_cert_sha256, device_uuid, \
-                         device_slug, offload_threshold_bytes";
+                         device_slug, offload_threshold_bytes, transferred_files, transferred_bytes";
 
 fn decode_offload(v: Option<i64>) -> Option<u64> {
     v.map(|n| if n < 0 { u64::MAX } else { n as u64 })
@@ -73,6 +77,8 @@ fn ring_from_row(r: &Row<'_>) -> rusqlite::Result<RingRow> {
         device_uuid: r.get(6)?,
         device_slug: r.get(7)?,
         offload_threshold_bytes: decode_offload(r.get(8)?),
+        transferred_files: r.get::<_, i64>(9)?.max(0) as u64,
+        transferred_bytes: r.get::<_, i64>(10)?.max(0) as u64,
     })
 }
 

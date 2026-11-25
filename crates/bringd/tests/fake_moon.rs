@@ -420,6 +420,10 @@ fn fake_moon_full_cycle() {
         .unwrap();
     assert_eq!(renamed_ring.device_slug, "phone-one");
     assert_eq!(renamed_ring.device_id.len(), 32);
+    assert!(
+        renamed_ring.transferred_files >= 3 && renamed_ring.transferred_bytes >= BIG as u64,
+        "cumulative transfer totals must survive offload and deletion: {renamed_ring:?}"
+    );
     assert_eq!(moon.ring().unwrap().unwrap().device_slug, "phone-one");
 
     let mut ctl = Ctl::connect(&d.join("ctl.sock"));
