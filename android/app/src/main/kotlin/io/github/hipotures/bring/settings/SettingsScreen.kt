@@ -87,6 +87,7 @@ fun AppSettingsScreen(vm: AppViewModel) {
     val context = LocalContext.current
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
+    val demoMode by context.bring.prefs.demoMode.collectAsStateWithLifecycle()
 
     Column(
         Modifier
@@ -102,6 +103,20 @@ fun AppSettingsScreen(vm: AppViewModel) {
             Segmented(ThemeChoice.entries, theme, vm::setTheme, label = { it.label })
             Text(
                 "System follows the phone's light or dark mode. Coffee is a warm dark theme.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Tm.colors.text2,
+            )
+        }
+
+        Panel(title = "Demo mode") {
+            Segmented(
+                listOf(false, true),
+                demoMode,
+                vm::setDemoMode,
+                label = { if (it) "On" else "Off" },
+            )
+            Text(
+                "Shows sample Rings, folders and sync activity for screenshots. Your real data is untouched.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Tm.colors.text2,
             )

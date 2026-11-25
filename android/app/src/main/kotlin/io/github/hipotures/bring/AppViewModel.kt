@@ -74,7 +74,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _pairing = MutableStateFlow<Pairing>(Pairing.Loading)
     val pairing: StateFlow<Pairing> = _pairing.asStateFlow()
 
-    val routes: StateFlow<Map<String, RouteStatus>> = bring.routes.asStateFlow()
+    val routes: StateFlow<Map<String, RouteStatus>> = combine(bring.prefs.demoMode, bring.routes) { demo, real ->
+        if (demo) DemoData.routes else real
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, if (bring.prefs.demoMode.value) DemoData.routes else bring.routes.value)
 
     /** Route status of the currently selected Ring. */
     val route: StateFlow<RouteStatus> = combine(_pairing, routes) { p, map ->
@@ -111,8 +113,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workInfos = wm.getWorkInfosByTagFlow(SyncScheduler.TAG)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val sync: StateFlow<SyncUi> = combine(bring.activeSync, workInfos) { live, infos ->
-        if (live.running) live else syncUi(infos)
+    val sync: StateFlow<SyncUi> = combine(bring.prefs.demoMode, bring.activeSync, workInfos) { demo, live, infos ->
+        if (demo) SyncUi() else if (live.running) live else syncUi(infos)
     }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUi())
@@ -122,8 +124,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val syncError: StateFlow<String?> = _syncError.asStateFlow()
 
     /** Finished rounds, newest first, and the end of the last check. */
-    val rounds = app.bring.syncLog.rounds
-    val lastChecked = app.bring.syncLog.lastChecked
+    val rounds = combine(bring.prefs.demoMode, app.bring.syncLog.rounds) { demo, real ->
+        if (demo) DemoData.rounds() else real
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, app.bring.syncLog.rounds.value)
+
+    val lastChecked = combine(bring.prefs.demoMode, app.bring.syncLog.lastChecked) { demo, real ->
+        if (demo) System.currentTimeMillis() - 4 * 60_000L else real
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, app.bring.syncLog.lastChecked.value)
 
     /** Bumped when a sync round ends, so lists reload. */
     val syncFinished = MutableStateFlow(0)
@@ -179,7 +186,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun activeRingId(): String? = (_pairing.value as? Pairing.Paired)?.activeRingId
 
+    private fun isDemo(): Boolean = bring.prefs.demoMode.value
+
+    fun setDemoMode(enabled: Boolean) {
+        bring.prefs.setDemoMode(enabled)
+        _verify.value = VerifyState.Idle
+        _message.value = null
+        refresh()
+    }
+
     fun refresh() {
+        if (isDemo()) {
+            val active = DemoData.RING_HOME_NAS
+            _pairing.value = Pairing.Paired(DemoData.rings, active)
+            _folders.value = DemoData.foldersFor(active)
+            _entries.value = DemoData.entriesFor(active)
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val all = runCatching { bring.moon.rings() }.getOrDefault(emptyList())
             if (all.size == 1) {
@@ -215,6 +238,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val current = _pairing.value as? Pairing.Paired ?: return
         if (current.activeRingId == ringId) return
         if (current.rings.none { it.ringId == ringId }) return
+        if (isDemo()) {
+            _pairing.value = current.copy(activeRingId = ringId)
+            _verify.value = VerifyState.Idle
+            _message.value = null
+            _folders.value = DemoData.foldersFor(ringId)
+            _entries.value = DemoData.entriesFor(ringId)
+            return
+        }
         bring.prefs.selectedRingId = ringId
         _pairing.value = current.copy(activeRingId = ringId)
         _verify.value = VerifyState.Idle
@@ -229,6 +260,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Called on resume: the user may have granted access in Settings. */
     fun onResume() {
         _storageGranted.value = StorageAccess.granted()
+        if (isDemo()) return
         if (_pairing.value is Pairing.Paired) {
             networkChanged.tryEmit(Unit)
             loadEntries()
@@ -281,20 +313,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadEntries(ringId: String? = null) {
+        if (isDemo()) return
         viewModelScope.launch(Dispatchers.IO) {
             val id = ringId ?: activeRingId() ?: return@launch
             runCatching { bring.moon.entriesFor(id, null) }.onSuccess { list ->
-                if (activeRingId() == id) _entries.value = list.filterNot { it.suppressed }
+                if (!isDemo() && activeRingId() == id) _entries.value = list.filterNot { it.suppressed }
             }
         }
     }
 
     private fun reloadRings() {
+        if (isDemo()) return
         viewModelScope.launch(Dispatchers.IO) {
             val cur = _pairing.value as? Pairing.Paired ?: return@launch
             val fresh = runCatching { bring.moon.rings() }.getOrDefault(emptyList())
                 .filter { bring.tokens.load(it.ringId) != null }
-            if (fresh.isNotEmpty()) {
+            if (!isDemo() && fresh.isNotEmpty()) {
                 val active = cur.activeRingId.takeIf { id -> fresh.any { it.ringId == id } }
                     ?: fresh.first().ringId
                 _pairing.value = Pairing.Paired(fresh, active)
@@ -303,6 +337,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun probeAllRoutes() {
+        if (isDemo()) return
         val rings = (_pairing.value as? Pairing.Paired)?.rings ?: return
         rings.forEach { probeRoute(it.ringId) }
     }
@@ -319,12 +354,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recheckRoute() {
+        if (isDemo()) return
         val id = activeRingId() ?: return
         bring.setRoute(id, RouteStatus.UNKNOWN)
         probeRoute(id)
     }
 
     fun syncNow() {
+        if (isDemo()) return
         _syncError.value = null
         SyncScheduler.syncNow(getApplication(), ringId = activeRingId())
     }
@@ -335,6 +372,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * folders, clears empty cached thumbnails and retries queued uploads.
      */
     fun verifySync() {
+        if (isDemo()) {
+            _message.value = StatusMessage("Demo mode is active")
+            return
+        }
         if (_verify.value is VerifyState.Running) return
         val id = activeRingId() ?: return
         _verify.value = VerifyState.Running
@@ -418,6 +459,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * become remote-only. Skips files another Ring still needs to upload.
      */
     fun freeLocal(files: List<Entry>) {
+        if (isDemo()) return
         viewModelScope.launch(Dispatchers.IO) {
             val text = try {
                 val r = bring.moon.freeLocal(files.map { it.id })
@@ -441,10 +483,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadFolders(ringId: String? = null) {
+        if (isDemo()) return
         viewModelScope.launch(Dispatchers.IO) {
             val id = ringId ?: activeRingId() ?: return@launch
             val list = runCatching { bring.moon.watchedFoldersFor(id) }.getOrDefault(emptyList())
-            if (activeRingId() == id) _folders.value = list
+            if (!isDemo() && activeRingId() == id) _folders.value = list
         }
     }
 
@@ -518,6 +561,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Runs [block] on IO; its result (or error) becomes [message]. */
     private fun action(block: suspend () -> String?) {
+        if (isDemo()) {
+            _message.value = StatusMessage("Demo mode is active")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _message.value = try {
                 block()?.let { StatusMessage(it, isError = false) }

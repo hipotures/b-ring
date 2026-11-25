@@ -25,6 +25,15 @@ class Prefs(context: Context) {
         _theme.value = choice
     }
 
+    private val _demoMode = MutableStateFlow(sp.getBoolean(DEMO_MODE, false))
+    /** Shows synthetic sample Rings, folders and activity without touching real data. */
+    val demoMode: StateFlow<Boolean> = _demoMode.asStateFlow()
+
+    fun setDemoMode(enabled: Boolean) {
+        sp.edit { putBoolean(DEMO_MODE, enabled) }
+        _demoMode.value = enabled
+    }
+
     /** User-chosen fallback offload threshold, or null for the engine default. */
     var offloadThresholdBytes: ULong?
         get() = if (sp.contains(OFFLOAD)) sp.getLong(OFFLOAD, 0).toULong() else null
@@ -46,5 +55,6 @@ class Prefs(context: Context) {
         const val OFFLOAD = "offload_threshold"
         const val SELECTED_RING = "selected_ring_id"
         const val LAST_SHARE_FOLDER = "last_share_folder"
+        const val DEMO_MODE = "demo_mode"
     }
 }
