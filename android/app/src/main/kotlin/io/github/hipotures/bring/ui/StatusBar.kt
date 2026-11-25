@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -55,9 +56,9 @@ fun RoutePlate(route: RouteStatus, small: Boolean = true) {
 }
 
 /**
- * Horizontal switcher for paired Rings (used on both Home and Settings):
- * each chip shows the Ring's custom name and live route dot; when [onAddRing]
- * is provided, a matching "+ Add Ring" chip follows at the end.
+ * Horizontal switcher for paired Rings on Home: scrollable Ring chips on the
+ * left, with optional per-Ring settings and "+" (add Ring) actions pinned at
+ * the far right edge.
  */
 @Composable
 fun RingSwitcher(
@@ -65,6 +66,7 @@ fun RingSwitcher(
     activeRingId: String,
     routes: Map<String, RouteStatus>,
     onSelect: (String) -> Unit,
+    onRingSettings: (() -> Unit)? = null,
     onAddRing: (() -> Unit)? = null,
 ) {
     val c = Tm.colors
@@ -72,36 +74,56 @@ fun RingSwitcher(
         Row(
             Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = TmDimens.space3, vertical = TmDimens.space1_5),
             horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            rings.forEach { ring ->
-                val selected = ring.ringId == activeRingId
-                val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
+            Row(
+                Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                rings.forEach { ring ->
+                    val selected = ring.ringId == activeRingId
+                    val r = routes[ring.ringId] ?: RouteStatus.UNKNOWN
+                    Row(
+                        Modifier
+                            .border(
+                                if (selected) TmDimens.bwControl else TmDimens.bw2,
+                                if (selected) c.ink else c.line2,
+                                ControlShape,
+                            )
+                            .background(if (selected) c.selectBg else c.surface, ControlShape)
+                            .clickable { onSelect(ring.ringId) }
+                            .heightIn(min = TmDimens.controlSm)
+                            .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
+                    ) {
+                        PlateMarkIcon(routeMark(r), 12.dp)
+                        Text(
+                            ring.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = c.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (onRingSettings != null) {
                 Row(
                     Modifier
-                        .border(
-                            if (selected) TmDimens.bwControl else TmDimens.bw2,
-                            if (selected) c.ink else c.line2,
-                            ControlShape,
-                        )
-                        .background(if (selected) c.selectBg else c.surface, ControlShape)
-                        .clickable { onSelect(ring.ringId) }
+                        .border(TmDimens.bw2, c.line2, ControlShape)
+                        .background(c.surface, ControlShape)
+                        .clickable(onClick = onRingSettings)
                         .heightIn(min = TmDimens.controlSm)
-                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
+                        .padding(horizontal = TmDimens.space2, vertical = TmDimens.space1),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(TmDimens.space1_5),
                 ) {
-                    PlateMarkIcon(routeMark(r), 12.dp)
-                    Text(
-                        ring.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = c.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Icon(SlidersGlyph, "Ring settings", Modifier.size(18.dp), tint = c.text2)
                 }
             }
             if (onAddRing != null) {
@@ -111,15 +133,10 @@ fun RingSwitcher(
                         .background(c.surface, ControlShape)
                         .clickable(onClick = onAddRing)
                         .heightIn(min = TmDimens.controlSm)
-                        .padding(horizontal = TmDimens.controlPadXMd, vertical = TmDimens.space1),
+                        .padding(horizontal = TmDimens.space2, vertical = TmDimens.space1),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "+ Add Ring",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = c.link,
-                        maxLines = 1,
-                    )
+                    Icon(Icons.Outlined.Add, "Add Ring", Modifier.size(18.dp), tint = c.link)
                 }
             }
         }
@@ -129,14 +146,14 @@ fun RingSwitcher(
 
 /**
  * Level 1 region: `chrome` band with a 2 dp `line1` rule below. Title,
- * route plate and 48 dp icon actions. On the home screen a second line holds
- * the last round's result. Uploads show in the system status bar, so the
- * strip never changes height and nothing below it jumps.
+ * optional route plate and 48 dp icon actions. On the home screen a second
+ * line holds the last round's result. Uploads show in the system status bar,
+ * so the strip never changes height and nothing below it jumps.
  */
 @Composable
 fun TopStrip(
     title: String,
-    route: RouteStatus,
+    route: RouteStatus? = null,
     sync: SyncUi,
     onBack: (() -> Unit)? = null,
     onSync: (() -> Unit)? = null,
@@ -162,7 +179,7 @@ fun TopStrip(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = if (onBack == null) TmDimens.space3 else TmDimens.space1),
             )
-            RoutePlate(route)
+            if (route != null) RoutePlate(route)
             if (onSync != null) ActionIcon(Icons.Outlined.Refresh, "Sync now", onSync, enabled = !sync.running)
             if (onActivity != null) ActionIcon(Icons.AutoMirrored.Outlined.List, "Sync activity", onActivity)
             if (onSettings != null) ActionIcon(Icons.Outlined.Settings, "Settings", onSettings)

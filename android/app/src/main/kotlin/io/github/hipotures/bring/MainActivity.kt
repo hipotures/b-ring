@@ -31,7 +31,8 @@ import io.github.hipotures.bring.browser.BrowserScreen
 import io.github.hipotures.bring.browser.parentOf
 import io.github.hipotures.bring.home.SetupPanel
 import io.github.hipotures.bring.pairing.PairingScreen
-import io.github.hipotures.bring.settings.SettingsScreen
+import io.github.hipotures.bring.settings.AppSettingsScreen
+import io.github.hipotures.bring.settings.RingSettingsScreen
 import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.RingSwitcher
 import io.github.hipotures.bring.ui.TopStrip
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, VIEW, SETTINGS, ACTIVITY, ADD_RING }
+private enum class Screen { HOME, VIEW, SETTINGS, RING_SETTINGS, ACTIVITY, ADD_RING }
 
 @Composable
 private fun App(openActivity: MutableStateFlow<Boolean>, vm: AppViewModel = viewModel()) {
@@ -119,7 +120,6 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
 
     BackHandler(enabled = screen != Screen.HOME || dir.isNotEmpty()) {
         when {
-            screen == Screen.ADD_RING -> screen = Screen.SETTINGS
             screen != Screen.HOME -> screen = Screen.HOME
             else -> dir = parentOf(dir)
         }
@@ -140,17 +140,17 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     queued = entries.count { it.uploadPending },
                     multiRing = multiRing,
                 )
-                if (multiRing) {
-                    RingSwitcher(
-                        rings = p.rings,
-                        activeRingId = p.activeRingId,
-                        routes = routes,
-                        onSelect = { id ->
-                            vm.selectRing(id)
-                            dir = ""
-                        },
-                    )
-                }
+                RingSwitcher(
+                    rings = p.rings,
+                    activeRingId = p.activeRingId,
+                    routes = routes,
+                    onSelect = { id ->
+                        vm.selectRing(id)
+                        dir = ""
+                    },
+                    onRingSettings = { screen = Screen.RING_SETTINGS },
+                    onAddRing = { screen = Screen.ADD_RING },
+                )
                 BrowserScreen(
                     entries = entries,
                     dir = dir,
@@ -160,7 +160,13 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                         screen = Screen.VIEW
                     },
                     header = {
-                        SetupPanel(storage, folders.size, onOpenSettings = { screen = Screen.SETTINGS })
+                        SetupPanel(
+                            storage,
+                            folders.size,
+                            onOpenSettings = {
+                                screen = if (!storage) Screen.SETTINGS else Screen.RING_SETTINGS
+                            },
+                        )
                     },
                     uploading = sync.path.takeIf { sync.running && sync.ringId == active.ringId },
                     onFreeLocal = vm::freeLocal,
@@ -183,25 +189,20 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                 ActivityScreen(rounds, lastChecked, entries)
             }
             Screen.SETTINGS -> {
-                TopStrip("Settings", route, sync, onBack = { screen = Screen.HOME })
-                RingSwitcher(
-                    rings = p.rings,
-                    activeRingId = p.activeRingId,
-                    routes = routes,
-                    onSelect = { id ->
-                        vm.selectRing(id)
-                        dir = ""
-                    },
-                    onAddRing = { screen = Screen.ADD_RING },
-                )
-                SettingsScreen(
+                TopStrip("Settings", route = null, sync = sync, onBack = { screen = Screen.HOME })
+                AppSettingsScreen(vm = vm)
+            }
+            Screen.RING_SETTINGS -> {
+                TopStrip("Ring · ${active.name}", route = route, sync = sync, onBack = { screen = Screen.HOME })
+                RingSettingsScreen(
                     rings = p.rings,
                     ring = active,
                     vm = vm,
+                    onOpenPermissions = { screen = Screen.SETTINGS },
                 )
             }
             Screen.ADD_RING -> {
-                TopStrip("Add Ring", route, sync, onBack = { screen = Screen.SETTINGS })
+                TopStrip("Add Ring", route = null, sync = sync, onBack = { screen = Screen.HOME })
                 PairingScreen(onPaired = {
                     vm.onPaired(it)
                     dir = ""

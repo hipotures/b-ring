@@ -92,9 +92,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Every entry the Moon knows for the currently selected Ring. */
     val entries: StateFlow<List<Entry>> = _entries.asStateFlow()
 
-    private val _message = MutableStateFlow<String?>(null)
-    /** A one-line result of the last user action (errors included). */
-    val message: StateFlow<String?> = _message.asStateFlow()
+    data class StatusMessage(val text: String, val isError: Boolean = false)
+
+    private val _message = MutableStateFlow<StatusMessage?>(null)
+    /** A one-line result of the last user action (errors flagged). */
+    val message: StateFlow<StatusMessage?> = _message.asStateFlow()
 
     sealed interface VerifyState {
         data object Idle : VerifyState
@@ -515,9 +517,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun action(block: suspend () -> String?) {
         viewModelScope.launch(Dispatchers.IO) {
             _message.value = try {
-                block()
+                block()?.let { StatusMessage(it, isError = false) }
             } catch (e: Exception) {
-                e.describe()
+                StatusMessage(e.describe(), isError = true)
             }
         }
     }

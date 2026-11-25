@@ -52,6 +52,7 @@ import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.FolderGlyph
 import io.github.hipotures.bring.ui.Group
+import io.github.hipotures.bring.ui.InfoLine
 import io.github.hipotures.bring.ui.KeyValue
 import io.github.hipotures.bring.ui.Panel
 import io.github.hipotures.bring.ui.PlateMark
@@ -80,11 +81,43 @@ private val OFFLOAD_CHOICES = listOf(
     "Never" to ULong.MAX_VALUE,
 )
 
+/** Global app settings (apply across all Rings): Permissions, Appearance, version. */
 @Composable
-fun SettingsScreen(
+fun AppSettingsScreen(vm: AppViewModel) {
+    val context = LocalContext.current
+    val storage by vm.storageGranted.collectAsStateWithLifecycle()
+    val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .imePadding()
+            .padding(TmDimens.panelPad),
+        verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
+    ) {
+        PermissionsPanel(storage)
+
+        Panel(title = "Appearance") {
+            Segmented(ThemeChoice.entries, theme, vm::setTheme, label = { it.label })
+            Text(
+                "System follows the phone's light or dark mode. Coffee is a warm dark theme.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Tm.colors.text2,
+            )
+        }
+
+        Text(versionLine(context), style = Tm.text.code, color = Tm.colors.text2)
+    }
+}
+
+/** Settings specific to a single paired Ring. */
+@Composable
+fun RingSettingsScreen(
     rings: List<RingInfo>,
     ring: RingInfo,
     vm: AppViewModel,
+    onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
     val route by vm.route.collectAsStateWithLifecycle()
@@ -94,7 +127,6 @@ fun SettingsScreen(
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
     val defaultOffload = context.bring.prefs.offloadThresholdBytes ?: (100UL * MIB)
     var offload by remember(ring.ringId, ring.offloadThresholdBytes) {
         mutableStateOf(ring.offloadThresholdBytes ?: defaultOffload)
@@ -116,10 +148,13 @@ fun SettingsScreen(
             .padding(TmDimens.panelPad),
         verticalArrangement = Arrangement.spacedBy(TmDimens.gapPanel),
     ) {
-        message?.let { ErrorLine(it) }
+        message?.let { m ->
+            if (m.isError) ErrorLine(m.text) else InfoLine(m.text)
+        }
 
         Panel(
-            title = if (multiRing) "Ring · ${ring.name}" else "Ring",
+            title = ring.name,
+            trailing = { RoutePlate(route) },
         ) {
             KeyValue("Name", ring.name)
             KeyValue("Device", ring.deviceSlug)
@@ -133,6 +168,11 @@ fun SettingsScreen(
             KeyValue("LAN", ring.lanUrl)
             KeyValue("WAN", ring.wanUrl ?: "— (LAN only)")
             KeyValue("TLS pin", ring.tlsCertSha256.chunked(4).take(8).joinToString(" ") + " …")
+            Text(
+                "LAN on unmetered Wi-Fi when the Ring answers within 1.5 s; otherwise WAN if configured. Background sync runs on LAN only.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Tm.colors.text2,
+            )
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(TmDimens.space2),
                 verticalArrangement = Arrangement.spacedBy(TmDimens.space2),
@@ -145,17 +185,8 @@ fun SettingsScreen(
                     draftDeviceName = ring.deviceSlug
                     renamingDevice = true
                 })
+                SharpButton("Check connection", onClick = vm::recheckRoute)
             }
-        }
-
-        Panel(title = "Connection", trailing = { RoutePlate(route) }) {
-            Text(
-                "LAN when on unmetered Wi-Fi and the Ring answers within 1.5 s; " +
-                    "otherwise WAN if configured. Background sync runs on LAN only.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Tm.colors.text2,
-            )
-            SharpButton("Check again", onClick = vm::recheckRoute)
         }
 
         val queued = remember(entries) { entries.count { it.uploadPending } }
@@ -202,9 +233,7 @@ fun SettingsScreen(
             }
         }
 
-        PermissionsPanel(storage)
-
-        Panel(title = if (multiRing) "Watched folders · ${ring.name}" else "Watched folders") {
+        Panel(title = "Watched folders") {
             if (multiRing) {
                 Text(
                     "Folders belong to ${ring.name}. Multiple Rings may watch the same folder.",
@@ -260,14 +289,15 @@ fun SettingsScreen(
             )
             if (!storage) {
                 Text(
-                    "Grant all-files access above to pick folders.",
+                    "All-files access is required to pick folders.",
                     style = Tm.text.code,
                     color = Tm.colors.text2,
                 )
+                SharpButton("Open app permissions", onClick = onOpenPermissions)
             }
         }
 
-        Panel(title = if (multiRing) "Offload · ${ring.name}" else "Offload") {
+        Panel(title = "Offload") {
             Text(
                 "After a verified upload, delete the local copy of files larger than:" +
                     if (multiRing) " (Shared folders wait until all watching Rings have verified the file.)" else "",
@@ -285,15 +315,6 @@ fun SettingsScreen(
             )
         }
 
-        Panel(title = "Appearance") {
-            Segmented(ThemeChoice.entries, theme, vm::setTheme, label = { it.label })
-            Text(
-                "System follows the phone's light or dark mode. Coffee is a warm dark theme.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Tm.colors.text2,
-            )
-        }
-
         Panel(title = "Pairing") {
             Text(
                 "Forgetting ${ring.name} drops its index and watched folders on this device. " +
@@ -307,8 +328,6 @@ fun SettingsScreen(
                 onClick = { confirmForget = true },
             )
         }
-
-        Text(versionLine(context), style = Tm.text.code, color = Tm.colors.text2)
     }
 
     if (picking) {

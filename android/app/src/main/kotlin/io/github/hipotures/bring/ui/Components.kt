@@ -458,6 +458,36 @@ fun ErrorLine(text: String) {
     }
 }
 
+/** A confirmation message: normal text after a green "✓" mark. */
+@Composable
+fun InfoLine(text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Box(Modifier.padding(top = 3.dp)) { PlateMarkIcon(PlateMark.COMPLETE, 14.dp) }
+        Spacer(Modifier.width(TmDimens.space2))
+        Text(text, color = Tm.colors.text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Outlined sliders glyph for per-Ring configuration (icons-core has no Tune). */
+val SlidersGlyph: ImageVector by lazy {
+    ImageVector.Builder("sliders", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Square) {
+            // Top slider (knob on left)
+            moveTo(3f, 6f); lineTo(7f, 6f)
+            moveTo(11f, 6f); lineTo(21f, 6f)
+            moveTo(9f, 4f); lineTo(9f, 8f)
+            // Middle slider (knob on right)
+            moveTo(3f, 12f); lineTo(14f, 12f)
+            moveTo(18f, 12f); lineTo(21f, 12f)
+            moveTo(16f, 10f); lineTo(16f, 14f)
+            // Bottom slider (knob in center)
+            moveTo(3f, 18f); lineTo(9f, 18f)
+            moveTo(13f, 18f); lineTo(21f, 18f)
+            moveTo(11f, 16f); lineTo(11f, 20f)
+        }
+    }.build()
+}
+
 /** A square-cornered folder outline in the Outlined icon style (icons-core has no folder). */
 val FolderGlyph: ImageVector by lazy {
     ImageVector.Builder("folder", 24.dp, 24.dp, 24f, 24f).apply {
