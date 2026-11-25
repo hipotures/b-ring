@@ -5,6 +5,7 @@ workstation (**Ring**) that keeps plain files on disk as the single source of
 truth.
 
 - Design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Android / Wi-Fi ADB cheatsheet: [`docs/ANDROID_DEV.md`](docs/ANDROID_DEV.md)
 - Workspace: `crates/bring-core`, `crates/bringd`, `crates/bring-cli` (`bring`),
   `crates/bring-uniffi`; Android client in `android/`.
 
