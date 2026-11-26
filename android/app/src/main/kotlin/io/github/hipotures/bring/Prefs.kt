@@ -80,7 +80,13 @@ class Prefs(context: Context) {
         get() = sp.getString(LAST_SHARE_FOLDER, null)
         set(v) = sp.edit { if (v.isNullOrBlank()) remove(LAST_SHARE_FOLDER) else putString(LAST_SHARE_FOLDER, v) }
 
+    /** The background-sync (battery) dialog was shown once; after that only Settings offers it. */
+    var backgroundAsked: Boolean
+        get() = sp.getBoolean(BACKGROUND_ASKED, false)
+        set(v) = sp.edit { putBoolean(BACKGROUND_ASKED, v) }
+
     private companion object {
+        const val BACKGROUND_ASKED = "background_asked"
         const val THEME = "theme"
         const val LEGACY_DARK = "dark_theme" // before The Mechanics
         const val OFFLOAD = "offload_threshold"

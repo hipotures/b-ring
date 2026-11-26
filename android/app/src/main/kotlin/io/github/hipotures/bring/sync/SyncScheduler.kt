@@ -18,27 +18,32 @@ object SyncScheduler {
     const val TAG = "bring-sync"
     const val PERIODIC = "bring-sync-periodic"
     const val MANUAL = "bring-sync-now"
-    const val MEDIA = "bring-sync-media"
+    const val MEDIA = "bring-sync-media-v2"
+    private const val MEDIA_LEGACY = "bring-sync-media"
     const val AUTO = "bring-sync-auto"
 
-    /** Background rounds every 15 min, only on unmetered networks (§4). */
+    /**
+     * Background rounds every 15 min. No network constraint on purpose: on
+     * Samsung a frozen app has its network cut (`OEM_DENY`), so a job waiting
+     * for the network never starts, and only a started job unfreezes the app.
+     * [SyncWorker] checks for unmetered Wi-Fi itself (§4).
+     * UPDATE carries the new constraints over to an already scheduled round.
+     */
     fun schedulePeriodic(context: Context) {
         val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(
-                Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build(),
-            )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
             .addTag(TAG)
             .build()
         WorkManager.getInstance(context)
-            .enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
+            .enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
     /**
      * New files right away: a round armed on MediaStore changes (photos,
      * videos, screenshots, downloads; app closed or not), started 5 s after
      * the last change and at most 30 s after the first. Same rules as the
-     * periodic round: unmetered network, LAN only. One-shot by nature
+     * periodic round: no network constraint (see [schedulePeriodic]), the
+     * worker itself checks unmetered Wi-Fi and the LAN. One-shot by nature
      * (JobScheduler content triggers), so each run arms the next one.
      *
      * [rearm] is for the triggered round itself: the next trigger is chained
@@ -46,7 +51,6 @@ object SyncScheduler {
      */
     fun watchMedia(context: Context, rearm: Boolean = false) {
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED)
             .addContentUriTrigger(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), true)
             .addContentUriTrigger(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), true)
             .addContentUriTrigger(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL), true)
@@ -59,10 +63,18 @@ object SyncScheduler {
             .addTag(TAG)
             .build()
         val policy = if (rearm) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP
-        WorkManager.getInstance(context).enqueueUniqueWork(MEDIA, policy, request)
+        val wm = WorkManager.getInstance(context)
+        // The trigger armed by older builds still waits for the network (see above).
+        // Not from a round itself: that round may be the legacy one.
+        if (!rearm) wm.cancelUniqueWork(MEDIA_LEGACY)
+        wm.enqueueUniqueWork(MEDIA, policy, request)
     }
 
-    /** An automatic round now (app opened): same rules as the periodic one. */
+    /**
+     * An automatic round as soon as unmetered Wi-Fi is there: on app open, and
+     * as a catch-up when a background round found no Wi-Fi. Keeps the network
+     * constraint: it is a best effort on top of the periodic round.
+     */
     fun syncSoon(context: Context) {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(

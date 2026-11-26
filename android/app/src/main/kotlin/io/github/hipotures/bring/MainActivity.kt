@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -34,6 +35,7 @@ import io.github.hipotures.bring.pairing.PairingScreen
 import io.github.hipotures.bring.settings.AppSettingsScreen
 import io.github.hipotures.bring.settings.FolderPicker
 import io.github.hipotures.bring.settings.RingSettingsScreen
+import io.github.hipotures.bring.sync.BackgroundAccess
 import io.github.hipotures.bring.ui.BringTheme
 import io.github.hipotures.bring.ui.RingBar
 import io.github.hipotures.bring.ui.RingSwitcher
@@ -119,6 +121,16 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
     }
     LaunchedEffect(screen) {
         if (screen == Screen.HOME) vm.loadEntries()
+    }
+    // Once per install, right after the first pairing (or the first start of a paired app):
+    // without the battery exemption Samsung cuts background network and sync waits for the app.
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        val prefs = context.bring.prefs
+        if (!prefs.backgroundAsked && !BackgroundAccess.granted(context)) {
+            prefs.backgroundAsked = true
+            BackgroundAccess.request(context)
+        }
     }
 
     BackHandler(enabled = screen != Screen.HOME || dir.isNotEmpty()) {

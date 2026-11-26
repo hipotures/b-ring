@@ -61,6 +61,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 .filter { bring.tokens.load(it.ringId) != null }
             if (paired.isEmpty()) return@withContext Result.success()
 
+            // Background rounds carry no network constraint (see SyncScheduler.schedulePeriodic),
+            // so check unmetered Wi-Fi here. The network may come back a moment after Samsung
+            // unfreezes the app for this job, hence the short wait.
+            if (trigger == Trigger.AUTO && !awaitUnmeteredWifi()) {
+                SyncScheduler.syncSoon(applicationContext)
+                return@withContext Result.success()
+            }
+
             val targets = targetRingId?.let { id ->
                 paired.filter { it.ringId == id }.ifEmpty { paired }
             } ?: paired
@@ -190,6 +198,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
     }
 
+    /** Unmetered Wi-Fi now, or within a few seconds (network unblocked after unfreeze). */
+    private suspend fun awaitUnmeteredWifi(): Boolean {
+        repeat(WIFI_WAIT_TRIES) {
+            if (applicationContext.onUnmeteredWifi()) return true
+            delay(1_000)
+        }
+        return applicationContext.onUnmeteredWifi()
+    }
+
     /**
      * Blink the status-bar mark while a file uploads: re-post the service's
      * notification with the other icon frame (well under Android's limit of
@@ -291,6 +308,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         private const val TAG = "SyncWorker"
         private const val BLINK_MS = 600L
+        private const val WIFI_WAIT_TRIES = 3
         const val KEY_MANUAL = "manual"
         const val KEY_MEDIA = "media"
         const val KEY_RING_ID = "ring_id"

@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- One system dialog to exempt the app from battery optimisation: on Samsung, Freecess otherwise cuts the network of the frozen app and background sync never starts. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Pairing channels (§3.6): "Listen" hears the sound option of `bring pair`,
          "Bluetooth" reads its BLE option. Both are optional hardware. -->

@@ -52,6 +52,7 @@ import io.github.hipotures.bring.pairing.SoundListener
 import io.github.hipotures.bring.pairing.SoundSettingsPanel
 import io.github.hipotures.bring.pairing.SoundTestPanel
 import io.github.hipotures.bring.storage.StorageAccess
+import io.github.hipotures.bring.sync.BackgroundAccess
 import io.github.hipotures.bring.ui.ActionIcon
 import io.github.hipotures.bring.ui.ErrorLine
 import io.github.hipotures.bring.ui.FolderGlyph
@@ -477,9 +478,11 @@ private fun PermissionsPanel(storage: Boolean) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
     var notifications by remember { mutableStateOf(notificationsOn()) }
+    var background by remember { mutableStateOf(BackgroundAccess.granted(context)) }
     // Back from the system screen: the user may have changed it there.
     LifecycleResumeEffect(Unit) {
         notifications = notificationsOn()
+        background = BackgroundAccess.granted(context)
         onPauseOrDispose {}
     }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = it }
@@ -500,6 +503,11 @@ private fun PermissionsPanel(storage: Boolean) {
             "The blinking upload mark in the status bar while a file uploads.",
             notifications,
         ) { ask.launch(Manifest.permission.POST_NOTIFICATIONS) },
+        Permission(
+            "Background sync",
+            "Unrestricted battery use, so new files go to the Ring within seconds, not only when the app is opened.",
+            background,
+        ) { BackgroundAccess.request(context) },
     )
     val missing = list.count { !it.granted }
     var open by rememberSaveable(missing) { mutableStateOf(missing > 0) }
