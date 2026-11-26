@@ -175,17 +175,17 @@ Seen on 2026‑11‑26 on the S23 Ultra (One UI 9, it showed up after a system u
 
 ```sh
 PKG=io.github.hipotures.bring
-UID=$($ADB shell cmd package list packages -U --user 0 $PKG | grep -oE 'uid:[0-9]+' | cut -d: -f2)
-$ADB shell dumpsys connectivity trafficcontroller | grep -E "^\s+$UID .*MATCH"  # OEM_DENY_1_MATCH = blocked
-$ADB shell dumpsys jobscheduler | grep -E "UID: $UID; Network"                  # blocked=REASON_OEM_DENY
-$ADB shell dumpsys jobscheduler $PKG | grep -E "Unsatisfied constraints|Trigger content URIs"
-$ADB logcat -d | grep -iE "Freecess.*($PKG|$UID)"                                 # UFZ ... reason: job
+UID=$($ADB -s "$SERIAL" shell cmd package list packages -U --user 0 $PKG | grep -oE 'uid:[0-9]+' | cut -d: -f2)
+$ADB -s "$SERIAL" shell dumpsys connectivity trafficcontroller | grep -E "^\s+$UID .*MATCH"  # OEM_DENY_1_MATCH = blocked
+$ADB -s "$SERIAL" shell dumpsys jobscheduler | grep -E "UID: $UID; Network"                  # blocked=REASON_OEM_DENY
+$ADB -s "$SERIAL" shell dumpsys jobscheduler $PKG | grep -E "Unsatisfied constraints|Trigger content URIs"
+$ADB -s "$SERIAL" logcat -d | grep -iE "Freecess.*($PKG|$UID)"                                 # UFZ ... reason: job
 ```
 
 Force-run a job, ignoring its constraints (WorkManager jobs live in their own namespace):
 
 ```sh
-$ADB shell cmd jobscheduler run -f -u 0 -n androidx.work.systemjobscheduler $PKG <job-id>
+$ADB -s "$SERIAL" shell cmd jobscheduler run -f -u 0 -n androidx.work.systemjobscheduler $PKG <job-id>
 ```
 
 **Workaround:** go to Settings → Apps → B-Ring → Battery and pick **Unrestricted**. If the app is already frozen, the setting takes effect only after the next unfreeze (opening the app or a forced job run). After that the log shows `FreecessHandler: stop trying to freeze io.github.hipotures.bring`, and the media trigger fires within about 10 s of a file being saved (confirmed on the S23).
