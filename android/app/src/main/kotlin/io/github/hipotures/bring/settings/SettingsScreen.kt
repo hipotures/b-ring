@@ -462,13 +462,24 @@ fun RingSettingsScreen(
     }
 }
 
-/** One permission: what it is for, and a way to grant it while it is missing. */
-private class Permission(val name: String, val purpose: String, val granted: Boolean, val grant: () -> Unit)
+/**
+ * One permission: what it is for, and a way to grant it while it is missing.
+ * [required]: the app does not work without it (missing = `danger`);
+ * otherwise it only degrades something (missing = `warning`).
+ */
+private class Permission(
+    val name: String,
+    val purpose: String,
+    val granted: Boolean,
+    val required: Boolean = false,
+    val grant: () -> Unit,
+)
 
 /**
  * Everything the app needs from Android in one panel. All granted: folded,
  * the header says so and a tap shows the list. Anything missing: open, the
- * missing ones in `warning` with a button to grant.
+ * missing ones in `danger` (required) or `warning` (recommended) with a
+ * button to grant.
  */
 @SuppressLint("InlinedApi") // the notification request only runs on API 33+
 @Composable
@@ -491,6 +502,7 @@ private fun PermissionsPanel(storage: Boolean) {
             "All-files access",
             "Read watched folders by path and delete offloaded copies.",
             storage,
+            required = true,
         ) {
             try {
                 context.startActivity(StorageAccess.requestIntent(context))
@@ -510,32 +522,34 @@ private fun PermissionsPanel(storage: Boolean) {
         ) { BackgroundAccess.request(context) },
     )
     val missing = list.count { !it.granted }
+    val missingRequired = list.count { !it.granted && it.required }
     var open by rememberSaveable(missing) { mutableStateOf(missing > 0) }
     Panel(
         title = "Permissions",
         trailing = {
-            StatusPlate(
-                if (missing == 0) "All granted" else "$missing required",
-                if (missing == 0) PlateMark.COMPLETE else PlateMark.WARNING,
-                small = true,
-            )
+            when {
+                missingRequired > 0 -> StatusPlate("$missingRequired required", PlateMark.ERROR, small = true)
+                missing > 0 -> StatusPlate("$missing recommended", PlateMark.WARNING, small = true)
+                else -> StatusPlate("All granted", PlateMark.COMPLETE, small = true)
+            }
         },
         expanded = open,
         onToggle = { open = !open },
     ) {
         list.forEachIndexed { i, p ->
             if (i > 0) RowDivider()
+            val missingColor = if (p.required) Tm.colors.danger else Tm.colors.warning
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f).padding(end = TmDimens.space2)) {
                     Text(
                         p.name,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (p.granted) Tm.colors.text else Tm.colors.warning,
+                        color = if (p.granted) Tm.colors.text else missingColor,
                     )
                     Text(
                         p.purpose,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (p.granted) Tm.colors.text2 else Tm.colors.warning,
+                        color = if (p.granted) Tm.colors.text2 else missingColor,
                     )
                 }
                 if (p.granted) Tag("Granted", TmTone.Success) else SharpButton("Grant", primary = true, onClick = p.grant)
