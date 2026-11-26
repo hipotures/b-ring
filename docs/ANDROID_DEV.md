@@ -160,3 +160,34 @@ bring status
 bring devices
 bring rename <id|slug> "<New Name>"
 ```
+
+---
+
+## 5. Background sync does not start on its own (Samsung)
+
+**Symptom:** a new photo or video (for example one saved from TikTok into `DCIM/Camera`) does not sync for minutes. As soon as the app is opened, the sync starts. The phone is on Wi‑Fi and the screen can even be on.
+
+**Cause:** Samsung's FreecessController freezes the app shortly after it leaves the foreground. Along with that it puts the app's UID into the `OEM_DENY_1` firewall chain, which cuts its network. JobScheduler then treats `CONNECTIVITY` as unsatisfied, so the WorkManager jobs (the MediaStore trigger and the 15‑min periodic round) never start. And only a running job unfreezes the app, so nothing moves until the app is opened.
+
+Seen on 2026‑11‑26 on the S23 Ultra (One UI 9, it showed up after a system update about 1–2 months earlier) with the battery set to **Optimised**. `OEM_DENY_1` was also present on the S20 FE (One UI 5.1), but there it was not tested end to end.
+
+**Diagnosis:**
+
+```sh
+PKG=io.github.hipotures.bring
+UID=$($ADB shell cmd package list packages -U --user 0 $PKG | grep -oE 'uid:[0-9]+' | cut -d: -f2)
+$ADB shell dumpsys connectivity trafficcontroller | grep -E "^\s+$UID .*MATCH"  # OEM_DENY_1_MATCH = blocked
+$ADB shell dumpsys jobscheduler | grep -E "UID: $UID; Network"                  # blocked=REASON_OEM_DENY
+$ADB shell dumpsys jobscheduler $PKG | grep -E "Unsatisfied constraints|Trigger content URIs"
+$ADB logcat -d | grep -iE "Freecess.*($PKG|$UID)"                                 # UFZ ... reason: job
+```
+
+Force-run a job, ignoring its constraints (WorkManager jobs live in their own namespace):
+
+```sh
+$ADB shell cmd jobscheduler run -f -u 0 -n androidx.work.systemjobscheduler $PKG <job-id>
+```
+
+**Workaround:** go to Settings → Apps → B-Ring → Battery and pick **Unrestricted**. If the app is already frozen, the setting takes effect only after the next unfreeze (opening the app or a forced job run). After that the log shows `FreecessHandler: stop trying to freeze io.github.hipotures.bring`, and the media trigger fires within about 10 s of a file being saved (confirmed on the S23).
+
+"Optimised" is the default after a fresh install, so the problem comes back after reinstalling and for new users. Possible code fix: drop the network constraint from the media and periodic requests and check unmetered Wi‑Fi inside `SyncWorker` (a running job unfreezes the app and gets network), and/or ask for the battery-optimisation exemption when pairing.
