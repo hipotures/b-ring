@@ -217,7 +217,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (rings.isEmpty()) return@launch
             val active = ringId?.takeIf { id -> rings.any { it.ringId == id } } ?: rings.first().ringId
             val folders = runCatching { moon.watchedFoldersFor(active) }.getOrDefault(emptyList())
-            val entries = runCatching { moon.entriesFor(active, null) }.getOrDefault(emptyList())
+            // Loading every entry of a huge index can exhaust the heap; show that instead of crashing.
+            val entries = try {
+                moon.entriesFor(active, null)
+            } catch (e: OutOfMemoryError) {
+                _message.value = StatusMessage("Demo index is too large to load into memory", isError = true)
+                emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
             if (!isDemo()) return@launch
             demoDbRings.value = rings.mapTo(HashSet()) { it.ringId }
             _pairing.value = Pairing.Paired(rings, active)
