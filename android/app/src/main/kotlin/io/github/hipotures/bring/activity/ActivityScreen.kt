@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.remember
-import io.github.hipotures.bring.Perf
 import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
@@ -87,7 +86,7 @@ fun ActivityScreen(
     var limit by rememberSaveable(day) { mutableIntStateOf(PAGE) }
     val days = remember(rounds) { rounds.mapTo(HashSet()) { it.localDay() } }
     val shown = remember(rounds, day) { day?.let { d -> rounds.filter { it.localDay().toEpochDay() == d } } ?: rounds }
-    val totals = remember(rings, entries) { Perf.time("activity.totals n=${entries.size}") { TransferTotals.of(rings, entries) } }
+    val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
             TransferSummary(totals, activeRingName)

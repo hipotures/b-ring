@@ -191,22 +191,3 @@ $ADB -s "$SERIAL" shell cmd jobscheduler run -f -u 0 -n androidx.work.systemjobs
 **Workaround:** go to Settings → Apps → B-Ring → Battery and pick **Unrestricted**. If the app is already frozen, the setting takes effect only after the next unfreeze (opening the app or a forced job run). After that the log shows `FreecessHandler: stop trying to freeze io.github.hipotures.bring`, and the media trigger fires within about 10 s of a file being saved (confirmed on the S23).
 
 "Optimised" is the default after a fresh install, so the problem comes back after reinstalling and for new users. Possible code fix: drop the network constraint from the media and periodic requests and check unmetered Wi‑Fi inside `SyncWorker` (a running job unfreezes the app and gets network), and/or ask for the battery-optimisation exemption when pairing.
-
-## Demo-mode load test (many fake files)
-
-Settings → Demo mode → On reveals a size selector (Sample / 10k / 100k / 1M).
-The fake `Entry` list is generated in memory (`DemoData.generated`); it is never
-written to `moon.db`, so real data and backups are unaffected.
-
-While Demo mode is on, `Perf` logs timings and heap use to logcat (tag
-`BringPerf`) and to `files/perf.log`:
-
-```sh
-$ADB -s "$SERIAL" exec-out run-as io.github.hipotures.bring cat files/perf.log
-$ADB -s "$SERIAL" logcat -s BringPerf
-```
-
-Measured: entry generation, Browser `here`/`counts`/`shown`/`listDir`, and the
-Activity totals. Open Browser, change folders and filters, and open Sync
-activity to fill the log. An `OutOfMemoryError` while generating is logged and
-shown as a message instead of crashing. Turning Demo mode on clears the log.
