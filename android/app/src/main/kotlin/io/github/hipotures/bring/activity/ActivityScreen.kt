@@ -159,18 +159,11 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
                     style = Tm.text.numeric,
                     color = c.text2,
                 )
-                shown.forEach {
-                    // The file name is what matters: let it wrap, and give the folder its own dimmer line.
-                    Column(Modifier.padding(top = TmDimens.space1)) {
-                        Text(it.substringAfterLast('/'), style = Tm.text.code, color = c.text)
-                        val dir = it.substringBeforeLast('/', "")
-                        if (dir.isNotEmpty()) {
-                            Text(dir, style = Tm.text.code, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-                if (r.uploaded > shown.size && shown.isNotEmpty()) {
-                    Text("… and ${r.uploaded - shown.size} more", style = Tm.text.code, color = c.text2)
+                FileNames(shown, r.uploaded)
+                val onRing = r.receivedFiles.take(SyncRound.MAX_FILES)
+                if (onRing.isNotEmpty()) {
+                    if (shown.isNotEmpty()) Text("New on the Ring", style = Tm.text.eyebrow, color = c.text2, modifier = Modifier.padding(top = TmDimens.space1_5))
+                    FileNames(onRing, r.received)
                 }
             }
         }
@@ -256,5 +249,24 @@ private fun TransferSummary(t: TransferTotals, activeRingName: String) {
                 )
             }
         }
+    }
+}
+
+/** The names of [shown] files (the folder dimmer, on its own line) and "… and N more" out of [total]. */
+@Composable
+private fun FileNames(shown: List<String>, total: Int) {
+    val c = Tm.colors
+    shown.forEach {
+        // The file name is what matters: let it wrap, and give the folder its own dimmer line.
+        Column(Modifier.padding(top = TmDimens.space1)) {
+            Text(it.substringAfterLast('/'), style = Tm.text.code, color = c.text)
+            val dir = it.substringBeforeLast('/', "")
+            if (dir.isNotEmpty()) {
+                Text(dir, style = Tm.text.code, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+    if (total > shown.size && shown.isNotEmpty()) {
+        Text("… and ${total - shown.size} more", style = Tm.text.code, color = c.text2)
     }
 }

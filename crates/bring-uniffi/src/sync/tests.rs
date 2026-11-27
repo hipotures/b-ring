@@ -495,3 +495,19 @@ fn looks_thumbable_matches_images_and_videos_only() {
     assert!(!looks_thumbable(Some("application/pdf"), "a/doc.pdf"));
     assert!(!looks_thumbable(None, "a/notes.txt"));
 }
+
+#[test]
+fn index_report_keeps_only_the_first_received_paths() {
+    let mut first = IndexReport::default();
+    for p in ["a", "b"] {
+        first.note_received(p);
+    }
+    let mut later = IndexReport { cursor: 9, ..Default::default() };
+    for p in ["c", "d"] {
+        later.note_received(p);
+    }
+    first.absorb(later);
+    assert_eq!(first.received, 4);
+    assert_eq!(first.received_paths, ["a", "b", "c"]);
+    assert_eq!(first.cursor, 9);
+}

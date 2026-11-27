@@ -38,7 +38,29 @@ pub struct IndexReport {
     /// Metadata-only echoes, e.g. our own upload coming back with its
     /// thumbnail, do not count.
     pub received: u32,
+    /// Ring paths of the first [`IndexReport::MAX_PATHS`] of those files, for display.
+    pub received_paths: Vec<String>,
     pub cursor: i64,
+}
+
+impl IndexReport {
+    /// How many received paths are kept; the count in `received` is exact.
+    pub const MAX_PATHS: usize = 3;
+
+    fn note_received(&mut self, path: &str) {
+        self.received += 1;
+        if self.received_paths.len() < Self::MAX_PATHS {
+            self.received_paths.push(path.to_owned());
+        }
+    }
+
+    /// Adds the files of a later pass over the index.
+    pub(crate) fn absorb(&mut self, later: IndexReport) {
+        self.received += later.received;
+        let room = Self::MAX_PATHS.saturating_sub(self.received_paths.len());
+        self.received_paths.extend(later.received_paths.into_iter().take(room));
+        self.cursor = later.cursor;
+    }
 }
 
 /// Result of [`Moon::scan_local`].
@@ -614,7 +636,7 @@ impl Moon {
                 let tx = db.transaction()?;
                 for e in &page.entries {
                     if apply_index_entry(&tx, s.ring.id, e)? {
-                        report.received += 1;
+                        report.note_received(e.path.as_str());
                     }
                 }
                 store::set_cursor(&tx, s.ring.id, page.next_since)?;
@@ -869,10 +891,7 @@ impl Moon {
                 return;
             }
             match self.sync_index_inner(s).await {
-                Ok(more) => {
-                    index.received += more.received;
-                    index.cursor = more.cursor;
-                }
+                Ok(more) => index.absorb(more),
                 Err(_) => return,
             }
         }

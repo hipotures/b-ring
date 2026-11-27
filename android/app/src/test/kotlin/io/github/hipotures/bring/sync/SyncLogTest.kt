@@ -20,6 +20,8 @@ class SyncLogTest {
         val back = SyncRound.decode(SyncRound.encode(r))!!
         assertEquals(r.copy(error = "bad thing here", files = listOf("DCIM/a b.jpg", "x y")), back)
         assertEquals(round(), SyncRound.decode(SyncRound.encode(round())))
+        val withRing = round().copy(receivedFiles = listOf("DCIM/x.jpg", "DCIM/y.jpg"))
+        assertEquals(withRing, SyncRound.decode(SyncRound.encode(withRing)))
         assertNull(SyncRound.decode("garbage"))
     }
 

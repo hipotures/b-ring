@@ -28,6 +28,8 @@ data class SyncRound(
     val files: List<String>,
     /** Custom name of the Ring synced in this round (empty in older log entries). */
     val ringName: String = "",
+    /** The first [MAX_FILES] Ring paths that were new on the Ring (empty in older log entries). */
+    val receivedFiles: List<String> = emptyList(),
 ) {
     /** Anything worth showing besides "checked, nothing new". */
     val changed: Boolean
@@ -44,12 +46,12 @@ data class SyncRound(
             r.endedAt, r.durationMs, if (r.manual) 1 else 0, clean(r.route),
             r.uploaded, r.uploadedBytes, r.received, r.found, r.offloaded, r.failed, r.remaining,
             clean(r.error ?: ""), r.files.joinToString(LIST_SEP.toString(), transform = ::clean),
-            clean(r.ringName),
+            clean(r.ringName), r.receivedFiles.joinToString(LIST_SEP.toString(), transform = ::clean),
         ).joinToString(SEP.toString())
 
         fun decode(line: String): SyncRound? {
             val f = line.split(SEP)
-            if (f.size != 13 && f.size != 14) return null
+            if (f.size !in 13..15) return null
             return runCatching {
                 SyncRound(
                     endedAt = f[0].toLong(),
@@ -66,6 +68,7 @@ data class SyncRound(
                     error = f[11].ifEmpty { null },
                     files = if (f[12].isEmpty()) emptyList() else f[12].split(LIST_SEP),
                     ringName = f.getOrNull(13).orEmpty(),
+                    receivedFiles = f.getOrNull(14).orEmpty().let { if (it.isEmpty()) emptyList() else it.split(LIST_SEP) },
                 )
             }.getOrNull()
         }

@@ -819,8 +819,7 @@ impl Moon {
             let scan = self.scan_local_inner(s.ring.id)?;
             let (outbox, uploaded_ids) = self.process_outbox_tracked(&s, listener.as_ref()).await?;
             let after = self.sync_index_inner(&s).await?;
-            index.received += after.received;
-            index.cursor = after.cursor;
+            index.absorb(after);
             self.wait_for_thumbs(&s, &uploaded_ids, &mut index).await;
             Ok(SyncReport {
                 index,

@@ -143,6 +143,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     error = error,
                     files = progress.completed.toList(),
                     ringName = ring.name,
+                    receivedFiles = report?.index?.receivedPaths.orEmpty(),
                 )
 
                 try {
