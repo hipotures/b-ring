@@ -1,6 +1,12 @@
 package io.github.hipotures.bring
 
+import io.github.hipotures.bring.browser.Browse
+import io.github.hipotures.bring.browser.DirRow
+import io.github.hipotures.bring.browser.listDir
 import io.github.hipotures.bring.ffi.Entry
+import io.github.hipotures.bring.ffi.FolderSummary
+import io.github.hipotures.bring.ffi.QueuedSummary
+import io.github.hipotures.bring.ffi.StateCounts
 import io.github.hipotures.bring.ffi.EntryState
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.WatchedFolder
@@ -82,6 +88,32 @@ object DemoData {
             WatchedFolder(7L, ringId, "/storage/emulated/0/Documents/Invoices", "invoices", true),
         )
         else -> emptyList()
+    }
+
+    /** The hand-made sample as a [Browse], for when no generated demo.db is on the phone. */
+    fun browse(ringId: String, dir: String, state: EntryState?, limit: Int): Browse {
+        val all = entriesFor(ringId)
+        val shown = if (state == null) all else all.filter { it.state == state }
+        val rows = listDir(
+            shown, dir, { it.ringPath }, { it.size.toLong() },
+            compareByDescending<Entry> { it.mtimeNs }.thenBy { it.ringPath },
+        )
+        val files = rows.filterIsInstance<DirRow.File<Entry>>().map { it.item }
+        val folders = rows.filterIsInstance<DirRow.Folder>()
+            .map { FolderSummary(it.name, it.path, it.files.toULong(), it.bytes.toULong()) }
+        val prefix = if (dir.isEmpty()) "" else "$dir/"
+        val under = all.filter { it.ringPath.startsWith(prefix) }
+        val counts = StateCounts(
+            all = under.size.toULong(),
+            localOnly = under.count { it.state == EntryState.LOCAL_ONLY }.toULong(),
+            synced = under.count { it.state == EntryState.SYNCED }.toULong(),
+            remoteOnly = under.count { it.state == EntryState.REMOTE_ONLY }.toULong(),
+        )
+        val pending = all.filter { it.uploadPending }
+        return Browse(
+            ringId, dir, state, limit, folders, files.take(limit), files.size.toLong(), counts,
+            QueuedSummary(pending.size.toULong(), pending.sumOf { it.size.toLong() }.toULong()),
+        )
     }
 
     fun entriesFor(ringId: String): List<Entry> {

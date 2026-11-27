@@ -146,6 +146,43 @@ pub struct Entry {
     pub last_error: Option<String>,
 }
 
+/// A subfolder in a folder listing, with the totals of everything beneath it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FolderSummary {
+    /// The last path segment.
+    pub name: String,
+    /// The full Ring path, no trailing slash.
+    pub path: String,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+/// One folder of the Ring: its subfolders plus one page of the files directly in it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DirPage {
+    pub folders: Vec<FolderSummary>,
+    /// Newest first; at most `limit` of them, from `offset`.
+    pub files: Vec<Entry>,
+    /// All files directly in this folder (for the state filter asked), not just this page.
+    pub total_files: u64,
+}
+
+/// File counts under a folder (subfolders included) per state.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct StateCounts {
+    pub all: u64,
+    pub local_only: u64,
+    pub synced: u64,
+    pub remote_only: u64,
+}
+
+/// Files waiting in the upload queue.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QueuedSummary {
+    pub files: u64,
+    pub bytes: u64,
+}
+
 /// What Media3 needs to play a file over its own (pinned) OkHttp client.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MediaSource {
@@ -311,6 +348,16 @@ impl Moon {
         cond: &str,
         args: &[&dyn rusqlite::ToSql],
     ) -> Result<Vec<Entry>, MoonError> {
+        self.query_entries_tail(cond, "ORDER BY e.ring_path", args)
+    }
+
+    /// Like [`Self::query_entries`] with an explicit `ORDER BY ... LIMIT ...` tail.
+    fn query_entries_tail(
+        &self,
+        cond: &str,
+        tail: &str,
+        args: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<Entry>, MoonError> {
         let db = self.db();
         let cols = store::ENTRY_COLS
             .split(", ")
@@ -322,7 +369,7 @@ impl Moon {
              FROM entries e
              JOIN rings r ON r.id = e.ring_id
              LEFT JOIN outbox o ON o.entry_id = e.id
-             WHERE {cond} ORDER BY e.ring_path"
+             WHERE {cond} {tail}"
         ))?;
         let rows = stmt.query_map(args, |r| {
             let e = store::entry_from_row(r)?;
@@ -358,6 +405,17 @@ impl Moon {
             .await;
             matches!(resp, Ok(Ok(h)) if h.ring_id == expected)
         }))
+    }
+}
+
+/// `dir` as the stored `dir` form (`a/b/`, `""` for the root) and the exclusive upper
+/// bound of everything beneath it (`'0'` is the character after `'/'`), `None` for the root.
+fn dir_bounds(dir: &str) -> (String, Option<String>) {
+    let d = dir.trim_matches('/');
+    if d.is_empty() {
+        (String::new(), None)
+    } else {
+        (format!("{d}/"), Some(format!("{d}0")))
     }
 }
 
@@ -890,6 +948,103 @@ impl Moon {
         self.entries_for(ring.ring_id_hex(), prefix)
     }
 
+    /// One folder of `ring_id` (`dir` is a Ring path such as `DCIM/2024`, `""` the root):
+    /// its subfolders with their totals, plus `limit` of the files directly in it from
+    /// `offset`, newest first. `state` keeps only files in that state, and only folders
+    /// that contain some. Reads the small per-folder table and one index range, never
+    /// every entry.
+    pub fn browse_dir_for(
+        &self,
+        ring_id: String,
+        dir: String,
+        state: Option<EntryState>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<DirPage, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(DirPage { folders: Vec::new(), files: Vec::new(), total_files: 0 });
+        };
+        let (prefix, upper) = dir_bounds(&dir);
+        let (count, bytes) = match state {
+            None => ("n_local + n_synced + n_remote", "b_local + b_synced + b_remote"),
+            Some(EntryState::LocalOnly) => ("n_local", "b_local"),
+            Some(EntryState::Synced) => ("n_synced", "b_synced"),
+            Some(EntryState::RemoteOnly) => ("n_remote", "b_remote"),
+        };
+        let state_sql: Option<&str> = state.map(|s| match s {
+            EntryState::LocalOnly => "local-only",
+            EntryState::Synced => "synced",
+            EntryState::RemoteOnly => "remote-only",
+        });
+        let (folders, total_files) = {
+            let db = self.db();
+            let mut stmt = db.prepare(&format!(
+                "SELECT seg, SUM(c), SUM(b) FROM (
+                   SELECT substr(rest, 1, instr(rest, '/') - 1) AS seg, {count} AS c, {bytes} AS b
+                   FROM (SELECT substr(dir, ?2) AS rest, n_local, n_synced, n_remote,
+                                b_local, b_synced, b_remote
+                         FROM dir_stats
+                         WHERE ring_id = ?1 AND dir > ?3 AND (?4 IS NULL OR dir < ?4)))
+                 GROUP BY seg HAVING SUM(c) > 0 ORDER BY seg COLLATE NOCASE"
+            ))?;
+            let start = prefix.chars().count() as i64 + 1;
+            let folders = stmt
+                .query_map(params![ring.id, start, prefix, upper], |r| {
+                    let name: String = r.get(0)?;
+                    Ok(FolderSummary {
+                        path: format!("{prefix}{name}"),
+                        name,
+                        files: r.get::<_, i64>(1)?.max(0) as u64,
+                        bytes: r.get::<_, i64>(2)?.max(0) as u64,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let total: i64 = db.query_row(
+                &format!("SELECT COALESCE(SUM({count}), 0) FROM dir_stats WHERE ring_id = ?1 AND dir = ?2"),
+                params![ring.id, prefix],
+                |r| r.get(0),
+            )?;
+            (folders, total.max(0) as u64)
+        };
+        let files = self.query_entries_tail(
+            "e.ring_id = ?1 AND e.dir = ?2 AND e.suppressed = 0 AND (?3 IS NULL OR e.state = ?3)",
+            "ORDER BY e.mtime_ns DESC, e.ring_path LIMIT ?4 OFFSET ?5",
+            &[&ring.id, &prefix, &state_sql, &limit, &offset],
+        )?;
+        Ok(DirPage { folders, files, total_files })
+    }
+
+    /// File counts per state under `dir` of `ring_id`, subfolders included.
+    pub fn dir_counts_for(&self, ring_id: String, dir: String) -> Result<StateCounts, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(StateCounts { all: 0, local_only: 0, synced: 0, remote_only: 0 });
+        };
+        let (prefix, upper) = dir_bounds(&dir);
+        let (l, s, r): (i64, i64, i64) = self.db().query_row(
+            "SELECT COALESCE(SUM(n_local), 0), COALESCE(SUM(n_synced), 0), COALESCE(SUM(n_remote), 0)
+             FROM dir_stats WHERE ring_id = ?1 AND (?3 IS NULL OR (dir >= ?2 AND dir < ?3))",
+            params![ring.id, prefix, upper],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (l, s, r) = (l.max(0) as u64, s.max(0) as u64, r.max(0) as u64);
+        Ok(StateCounts { all: l + s + r, local_only: l, synced: s, remote_only: r })
+    }
+
+    /// Files of `ring_id` waiting to be uploaded, and their size.
+    pub fn queued_for(&self, ring_id: String) -> Result<QueuedSummary, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(QueuedSummary { files: 0, bytes: 0 });
+        };
+        let (n, b): (i64, i64) = self.db().query_row(
+            "SELECT COUNT(*), COALESCE(SUM(e.size), 0)
+             FROM outbox o JOIN entries e ON e.id = o.entry_id
+             WHERE e.ring_id = ?1 AND e.suppressed = 0",
+            [ring.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(QueuedSummary { files: n.max(0) as u64, bytes: b.max(0) as u64 })
+    }
+
     /// JPEG thumbnail bytes for an entry's `thumb` from `ring_id`.
     pub fn thumbnail_for(&self, ring_id: String, thumb: String) -> Result<Vec<u8>, MoonError> {
         if thumb.len() != 64 || !thumb.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -1045,5 +1200,94 @@ mod default_folder_tests {
             default_ring_folder("fake-moon", "/tmp/phone/DCIM").unwrap(),
             "fake-moon/DCIM"
         );
+    }
+}
+
+#[cfg(test)]
+mod browse_tests {
+    use super::*;
+
+    fn moon_with_files() -> (tempfile::TempDir, Arc<Moon>, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let moon = Moon::open(dir.path().join("moon.db").to_string_lossy().into_owned()).unwrap();
+        let rid = {
+            let db = moon.db();
+            db.execute(
+                "INSERT INTO rings (id, ring_id, lan_url, tls_cert_sha256, device_uuid, device_slug)
+                 VALUES (1, zeroblob(16), 'u', zeroblob(32), zeroblob(16), 's')",
+                [],
+            )
+            .unwrap();
+            for (i, (path, size, state, mtime)) in [
+                ("top.txt", 1, "synced", 5),
+                ("DCIM/a.jpg", 10, "remote-only", 1),
+                ("DCIM/b.jpg", 20, "synced", 3),
+                ("DCIM/2024/c.jpg", 40, "remote-only", 2),
+                ("DCIM/2024/05/d.jpg", 80, "local-only", 4),
+                ("DCIM-not/e.jpg", 160, "remote-only", 6),
+                ("dcim2/f.jpg", 320, "remote-only", 7),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                db.execute(
+                    "INSERT INTO entries (id, ring_id, ring_path, size, mtime_ns, state)
+                     VALUES (?1, 1, ?2, ?3, ?4, ?5)",
+                    params![i as i64 + 1, path, size, mtime, state],
+                )
+                .unwrap();
+            }
+            db.execute("INSERT INTO outbox (entry_id, hashed_size, hashed_mtime_ns) VALUES (5, 80, 4)", [])
+                .unwrap();
+            hex_encode(&[0u8; 16])
+        };
+        (dir, moon, rid)
+    }
+
+    #[test]
+    fn root_lists_folders_with_totals_and_top_files() {
+        let (_d, m, rid) = moon_with_files();
+        let page = m.browse_dir_for(rid.clone(), String::new(), None, 0, 50).unwrap();
+        let folders: Vec<_> = page.folders.iter().map(|f| (f.name.as_str(), f.path.as_str(), f.files, f.bytes)).collect();
+        assert_eq!(
+            folders,
+            [("DCIM", "DCIM", 4, 150), ("DCIM-not", "DCIM-not", 1, 160), ("dcim2", "dcim2", 1, 320)]
+        );
+        assert_eq!(page.files.iter().map(|e| e.ring_path.as_str()).collect::<Vec<_>>(), ["top.txt"]);
+        assert_eq!(page.total_files, 1);
+    }
+
+    #[test]
+    fn subfolder_lists_children_and_pages_newest_first() {
+        let (_d, m, rid) = moon_with_files();
+        let page = m.browse_dir_for(rid.clone(), "DCIM".into(), None, 0, 1).unwrap();
+        assert_eq!(page.folders.len(), 1);
+        assert_eq!((page.folders[0].path.as_str(), page.folders[0].files), ("DCIM/2024", 2));
+        assert_eq!(page.total_files, 2);
+        assert_eq!(page.files.iter().map(|e| e.ring_path.as_str()).collect::<Vec<_>>(), ["DCIM/b.jpg"]);
+        let next = m.browse_dir_for(rid, "DCIM".into(), None, 1, 1).unwrap();
+        assert_eq!(next.files.iter().map(|e| e.ring_path.as_str()).collect::<Vec<_>>(), ["DCIM/a.jpg"]);
+    }
+
+    #[test]
+    fn state_filter_keeps_only_matching_files_and_folders() {
+        let (_d, m, rid) = moon_with_files();
+        let page = m.browse_dir_for(rid.clone(), "DCIM".into(), Some(EntryState::Synced), 0, 50).unwrap();
+        assert!(page.folders.is_empty());
+        assert_eq!(page.files.len(), 1);
+        let page = m.browse_dir_for(rid, String::new(), Some(EntryState::LocalOnly), 0, 50).unwrap();
+        assert_eq!(page.folders.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["DCIM"]);
+        assert!(page.files.is_empty());
+    }
+
+    #[test]
+    fn counts_and_queue() {
+        let (_d, m, rid) = moon_with_files();
+        let c = m.dir_counts_for(rid.clone(), "DCIM".into()).unwrap();
+        assert_eq!((c.all, c.local_only, c.synced, c.remote_only), (4, 1, 1, 2));
+        let all = m.dir_counts_for(rid.clone(), String::new()).unwrap();
+        assert_eq!(all.all, 7);
+        let q = m.queued_for(rid).unwrap();
+        assert_eq!((q.files, q.bytes), (1, 80));
     }
 }

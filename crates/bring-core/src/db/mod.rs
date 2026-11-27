@@ -20,6 +20,7 @@ const MOON_MIGRATIONS: &[&str] = &[
     include_str!("moon/0002_multi_ring.sql"),
     include_str!("moon/0003_transfer_stats.sql"),
     include_str!("moon/0004_entry_offload.sql"),
+    include_str!("moon/0005_dir_stats.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +167,7 @@ mod tests {
         assert_eq!(
             tables(&conn),
             [
+                "dir_stats",
                 "entries",
                 "outbox",
                 "rings",
@@ -173,6 +175,65 @@ mod tests {
                 "watched_folders"
             ]
         );
+    }
+
+    /// Folder totals must equal a recount of the entries after any sequence of changes.
+    #[test]
+    fn dir_stats_follow_entries() {
+        let conn = open_in_memory(Role::Moon).unwrap();
+        conn.execute_batch(
+            "INSERT INTO rings (id, ring_id, lan_url, tls_cert_sha256, device_uuid, device_slug)
+             VALUES (1, zeroblob(16), 'u', zeroblob(32), zeroblob(16), 's');",
+        )
+        .unwrap();
+        let add = |path: &str, size: i64, state: &str| {
+            conn.execute(
+                "INSERT INTO entries (ring_id, ring_path, size, mtime_ns, state) VALUES (1, ?1, ?2, 0, ?3)",
+                rusqlite::params![path, size, state],
+            )
+            .unwrap();
+        };
+        add("a.txt", 1, "synced");
+        add("x/b.jpg", 10, "remote-only");
+        add("x/c.jpg", 20, "local-only");
+        add("x/y/d.jpg", 40, "synced");
+        let dir: String = conn
+            .query_row("SELECT dir FROM entries WHERE ring_path = 'x/y/d.jpg'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dir, "x/y/");
+        let top: String = conn
+            .query_row("SELECT dir FROM entries WHERE ring_path = 'a.txt'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(top, "");
+
+        conn.execute("UPDATE entries SET state = 'synced', size = 25 WHERE ring_path = 'x/c.jpg'", []).unwrap();
+        conn.execute("UPDATE entries SET suppressed = 1 WHERE ring_path = 'x/b.jpg'", []).unwrap();
+        conn.execute("UPDATE entries SET ring_path = 'z/d.jpg' WHERE ring_path = 'x/y/d.jpg'", []).unwrap();
+        conn.execute("DELETE FROM entries WHERE ring_path = 'a.txt'", []).unwrap();
+        add("x/e.jpg", 5, "remote-only");
+
+        let totals = |sql: &str| -> Vec<(String, i64, i64, i64, i64, i64, i64)> {
+            let mut st = conn.prepare(sql).unwrap();
+            st.query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+        };
+        let live = totals(
+            "SELECT dir, n_local, n_synced, n_remote, b_local, b_synced, b_remote
+             FROM dir_stats WHERE n_local + n_synced + n_remote > 0 ORDER BY dir",
+        );
+        let recount = totals(
+            "SELECT dir, SUM(state = 'local-only'), SUM(state = 'synced'), SUM(state = 'remote-only'),
+                    SUM(CASE WHEN state = 'local-only' THEN size ELSE 0 END),
+                    SUM(CASE WHEN state = 'synced' THEN size ELSE 0 END),
+                    SUM(CASE WHEN state = 'remote-only' THEN size ELSE 0 END)
+             FROM entries WHERE suppressed = 0 GROUP BY dir ORDER BY dir",
+        );
+        assert_eq!(live, recount);
+        assert_eq!(live.len(), 2, "x/ and z/ remain: {live:?}");
     }
 
     #[test]

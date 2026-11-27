@@ -37,6 +37,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,14 +80,17 @@ enum class Filter(val label: String, val state: EntryState?) {
     REMOTE("Remote", EntryState.REMOTE_ONLY),
 }
 
-/** Newest first, then by path for a stable order. */
-private val newestFirst = compareByDescending<Entry> { it.mtimeNs }.thenBy { it.ringPath }
+/** Files loaded per request; more follow as the list is scrolled to its end. */
+private const val PAGE = 200
 
 @Composable
 fun BrowserScreen(
-    entries: List<Entry>,
+    /** The folder to show, from [onShow]; null until the first answer. */
+    browse: Browse?,
     dir: String,
     onDir: (String) -> Unit,
+    /** Asks for [dir] with the state filter and the number of files wanted. */
+    onShow: (dir: String, state: EntryState?, limit: Int) -> Unit,
     onOpen: (Entry) -> Unit,
     header: @Composable () -> Unit,
     /** Ring path of the file being uploaded right now, if any. */
@@ -100,27 +105,23 @@ fun BrowserScreen(
     onAddFolder: (() -> Unit)? = null,
 ) {
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
-    // Counts cover this folder and its subfolders, like the list below.
-    val here = remember(entries, dir) {
-        if (dir.isEmpty()) entries else entries.filter { it.ringPath.startsWith("$dir/") }
-    }
-    val counts = remember(here) { here.groupingBy { it.state }.eachCount() }
-    val shown = remember(entries, filter) {
-        if (filter.state == null) entries else entries.filter { it.state == filter.state }
-    }
-    val rows = remember(shown, dir, filter, watchedFolders) {
-        listDir(
-            shown,
-            dir,
-            { it.ringPath },
-            { it.size.toLong() },
-            newestFirst,
-            extraFolders = if (filter == Filter.ALL) watchedFolders else emptyList(),
-        )
+    var limit by remember(dir, filter) { mutableIntStateOf(PAGE) }
+    LaunchedEffect(dir, filter, limit) { onShow(dir, filter.state, limit) }
+    val counts = browse?.counts
+    val files = browse?.files.orEmpty()
+    val moreFiles = browse != null && files.size < browse.total
+    val rows = remember(browse, dir, filter, watchedFolders) {
+        if (browse == null) {
+            emptyList()
+        } else {
+            val folders = if (filter == Filter.ALL) withWatchedFolders(browse.folders, dir, watchedFolders) else browse.folders
+            folders.map { DirRow.Folder(it.name, it.path, it.files.toInt(), it.bytes.toLong()) } +
+                browse.files.map { DirRow.File(it, it.ringPath.substringAfterLast('/')) }
+        }
     }
     // Long-press starts selecting; a tap then toggles instead of opening.
     var selected by remember(dir) { mutableStateOf(emptySet<Long>()) }
-    val picked = remember(here, selected) { here.filter { it.id in selected } }
+    val picked = remember(files, selected) { files.filter { it.id in selected } }
     val selecting = picked.isNotEmpty()
     var confirm by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
@@ -141,7 +142,15 @@ fun BrowserScreen(
                 selected = filter,
                 onSelect = { filter = it },
                 label = { it.label },
-                sub = { f -> "${if (f.state == null) here.size else counts[f.state] ?: 0}" },
+                sub = { f ->
+                    val c = counts
+                    "${when (f.state) {
+                        null -> c?.all ?: 0UL
+                        EntryState.LOCAL_ONLY -> c?.localOnly ?: 0UL
+                        EntryState.SYNCED -> c?.synced ?: 0UL
+                        EntryState.REMOTE_ONLY -> c?.remoteOnly ?: 0UL
+                    }}"
+                },
                 modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
             )
             HorizontalDivider(thickness = TmDimens.bw2, color = Tm.colors.line2)
@@ -156,7 +165,7 @@ fun BrowserScreen(
                     when {
                         filter.state != null -> "No ${filter.label.lowercase()} files in this folder."
                         dir.isNotEmpty() -> "This folder is empty. Files added here will sync automatically."
-                        entries.isEmpty() -> "Nothing here yet. Files appear as they are synced."
+                        dir.isEmpty() && counts?.all == 0UL -> "Nothing here yet. Files appear as they are synced."
                         else -> "No files match."
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -186,6 +195,12 @@ fun BrowserScreen(
                 )
             }
             RowDivider()
+        }
+        if (moreFiles) {
+            item(key = "more") {
+                // Reaching the end of the loaded files asks for the next page.
+                LaunchedEffect(files.size) { limit += PAGE }
+            }
         }
     }
     if (selecting) {

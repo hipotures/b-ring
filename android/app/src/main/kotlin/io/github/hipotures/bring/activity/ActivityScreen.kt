@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.remember
-import io.github.hipotures.bring.ffi.Entry
+import io.github.hipotures.bring.ffi.QueuedSummary
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
 import androidx.compose.foundation.clickable
@@ -75,7 +75,7 @@ fun ActivityScreen(
     rounds: List<SyncRound>,
     lastChecked: Long,
     rings: List<RingInfo>,
-    entries: List<Entry>,
+    queued: QueuedSummary?,
     activeRingName: String,
 ) {
     val c = Tm.colors
@@ -86,7 +86,7 @@ fun ActivityScreen(
     var limit by rememberSaveable(day) { mutableIntStateOf(PAGE) }
     val days = remember(rounds) { rounds.mapTo(HashSet()) { it.localDay() } }
     val shown = remember(rounds, day) { day?.let { d -> rounds.filter { it.localDay().toEpochDay() == d } } ?: rounds }
-    val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
+    val totals = remember(rings, queued) { TransferTotals.of(rings, queued) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
             TransferSummary(totals, activeRingName)
@@ -228,21 +228,15 @@ private data class TransferTotals(
     val queuedBytes: Long,
 ) {
     companion object {
-        fun of(rings: List<RingInfo>, entries: List<Entry>): TransferTotals {
+        fun of(rings: List<RingInfo>, queued: QueuedSummary?): TransferTotals {
             var files = 0L
             var bytes = 0L
             for (r in rings) {
                 files += r.transferredFiles.toLong()
                 bytes += r.transferredBytes.toLong()
             }
-            var qFiles = 0
-            var qBytes = 0L
-            for (e in entries) {
-                if (e.uploadPending) {
-                    qFiles++
-                    qBytes += e.size.toLong()
-                }
-            }
+            val qFiles = queued?.files?.toInt() ?: 0
+            val qBytes = queued?.bytes?.toLong() ?: 0L
             return TransferTotals(files, bytes, qFiles, qBytes)
         }
     }

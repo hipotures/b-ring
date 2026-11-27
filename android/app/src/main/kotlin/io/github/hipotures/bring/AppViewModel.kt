@@ -13,7 +13,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import coil3.SingletonImageLoader
+import io.github.hipotures.bring.browser.Browse
 import io.github.hipotures.bring.ffi.Entry
+import io.github.hipotures.bring.ffi.EntryState
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.ffi.VerifyReport
 import io.github.hipotures.bring.ffi.WatchedFolder
@@ -24,6 +26,8 @@ import io.github.hipotures.bring.sync.SyncWorker
 import io.github.hipotures.bring.sync.onUnmeteredWifi
 import io.github.hipotures.bring.ui.ThemeChoice
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -93,9 +97,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _folders = MutableStateFlow<List<WatchedFolder>>(emptyList())
     val folders: StateFlow<List<WatchedFolder>> = _folders.asStateFlow()
 
-    private val _entries = MutableStateFlow<List<Entry>>(emptyList())
-    /** Every entry the Moon knows for the currently selected Ring. */
-    val entries: StateFlow<List<Entry>> = _entries.asStateFlow()
+    private val _browse = MutableStateFlow<Browse?>(null)
+    /** The folder the browser asked for, read from the index (not the whole index). */
+    val browse: StateFlow<Browse?> = _browse.asStateFlow()
+
+    private data class Want(val dir: String, val state: EntryState?, val limit: Int)
+
+    @Volatile private var want = Want("", null, 200)
+    private var browseJob: Job? = null
+
+    /** The browser wants [dir] (a Ring path, "" for the root) filtered by [state], with [limit] files. */
+    fun showDir(dir: String, state: EntryState?, limit: Int) {
+        want = Want(dir, state, limit)
+        reloadBrowse()
+    }
+
+    /** Re-reads what the browser last asked for, e.g. after a sync changed the index. */
+    private fun reloadBrowse() {
+        val id = activeRingId() ?: return
+        val w = want
+        browseJob?.cancel()
+        browseJob = viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { queryBrowse(id, w) }.getOrNull() ?: return@launch
+            ensureActive()
+            if (activeRingId() == id) _browse.value = result
+        }
+    }
+
+    private fun queryBrowse(id: String, w: Want): Browse {
+        val moon = if (isDemo()) bring.demoMoon() else bring.moon
+        if (moon == null) return DemoData.browse(id, w.dir, w.state, w.limit)
+        val page = moon.browseDirFor(id, w.dir, w.state, 0u, w.limit.toUInt())
+        return Browse.of(id, w.dir, w.state, w.limit, page, moon.dirCountsFor(id, w.dir), moon.queuedFor(id))
+    }
 
     data class StatusMessage(val text: String, val isError: Boolean = false)
 
@@ -209,7 +243,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val active = ringId ?: DemoData.RING_HOME_NAS
             _pairing.value = Pairing.Paired(DemoData.rings, active)
             _folders.value = DemoData.foldersFor(active)
-            _entries.value = DemoData.entriesFor(active)
+            reloadBrowse()
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -217,20 +251,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (rings.isEmpty()) return@launch
             val active = ringId?.takeIf { id -> rings.any { it.ringId == id } } ?: rings.first().ringId
             val folders = runCatching { moon.watchedFoldersFor(active) }.getOrDefault(emptyList())
-            // Loading every entry of a huge index can exhaust the heap; show that instead of crashing.
-            val entries = try {
-                moon.entriesFor(active, null)
-            } catch (e: OutOfMemoryError) {
-                _message.value = StatusMessage("Demo index is too large to load into memory", isError = true)
-                emptyList()
-            } catch (e: Exception) {
-                emptyList()
-            }
             if (!isDemo()) return@launch
             demoDbRings.value = rings.mapTo(HashSet()) { it.ringId }
             _pairing.value = Pairing.Paired(rings, active)
             _folders.value = folders
-            _entries.value = entries.filterNot { it.suppressed }
+            reloadBrowse()
         }
     }
 
@@ -264,7 +289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 _pairing.value = Pairing.Unpaired
                 _folders.value = emptyList()
-                _entries.value = emptyList()
+                _browse.value = null
             }
         }
     }
@@ -347,15 +372,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         "Device renamed to ${updated.deviceSlug}"
     }
 
-    fun loadEntries(ringId: String? = null) {
-        if (isDemo()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val id = ringId ?: activeRingId() ?: return@launch
-            runCatching { bring.moon.entriesFor(id, null) }.onSuccess { list ->
-                if (!isDemo() && activeRingId() == id) _entries.value = list.filterNot { it.suppressed }
-            }
-        }
-    }
+    /** Reloads the current folder view (the index may have changed). */
+    @Suppress("UNUSED_PARAMETER")
+    fun loadEntries(ringId: String? = null) = reloadBrowse()
 
     private fun reloadRings() {
         if (isDemo()) return
@@ -428,9 +447,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             ?.forEach { it.delete() }
                         val r = bring.moon.verifySyncFor(id)
                         SingletonImageLoader.get(app).memoryCache?.clear()
-                        runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
-                            if (activeRingId() == id) _entries.value = it.filterNot { e -> e.suppressed }
-                        }
+                        reloadBrowse()
                         if (r.queued > 0u) SyncScheduler.syncNow(app, ringId = id)
                         VerifyState.Done(
                             summary = formatVerifyReport(r),
@@ -535,9 +552,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // and its files appear on Home immediately before hashing/upload begins.
         if (!bring.syncMutex.isLocked) {
             runCatching { bring.moon.scanLocalFor(id) }
-            runCatching { bring.moon.entriesFor(id, null) }.onSuccess {
-                if (activeRingId() == id) _entries.value = it.filterNot { e -> e.suppressed }
-            }
+            reloadBrowse()
         }
         SyncScheduler.syncNow(getApplication(), queueAfter = true, ringId = id)
         "Watching $localDir"
@@ -577,7 +592,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             SyncScheduler.cancelAll(getApplication())
             bring.prefs.selectedRingId = null
             _folders.value = emptyList()
-            _entries.value = emptyList()
+            _browse.value = null
             _pairing.value = Pairing.Unpaired
         } else {
             val next = remaining.first().ringId

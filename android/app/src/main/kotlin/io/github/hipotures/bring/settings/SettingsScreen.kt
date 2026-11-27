@@ -148,7 +148,7 @@ fun RingSettingsScreen(
     val context = LocalContext.current
     val sync by vm.sync.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
-    val entries by vm.entries.collectAsStateWithLifecycle()
+    val browse by vm.browse.collectAsStateWithLifecycle()
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -206,7 +206,7 @@ fun RingSettingsScreen(
             )
         }
 
-        val queued = remember(entries) { entries.count { it.uploadPending } }
+        val queued = browse?.queued?.files?.toInt() ?: 0
         Panel(
             title = "Sync & index",
             trailing = {

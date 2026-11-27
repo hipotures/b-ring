@@ -107,7 +107,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
     val sync by vm.sync.collectAsStateWithLifecycle()
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
-    val entries by vm.entries.collectAsStateWithLifecycle()
+    val browse by vm.browse.collectAsStateWithLifecycle()
     val rounds by vm.rounds.collectAsStateWithLifecycle()
     val lastChecked by vm.lastChecked.collectAsStateWithLifecycle()
     val wantActivity by openActivity.collectAsStateWithLifecycle()
@@ -167,13 +167,14 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     onActivity = { screen = Screen.ACTIVITY },
                     lastRound = rounds.firstOrNull(),
                     lastChecked = lastChecked,
-                    queued = entries.count { it.uploadPending },
+                    queued = browse?.queued?.files?.toInt() ?: 0,
                     multiRing = multiRing,
                 )
                 BrowserScreen(
-                    entries = entries,
+                    browse = browse,
                     dir = dir,
                     onDir = { dir = it },
+                    onShow = vm::showDir,
                     onOpen = {
                         viewing = it.id
                         screen = Screen.VIEW
@@ -222,7 +223,7 @@ private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivit
                     rounds,
                     lastChecked,
                     p.rings,
-                    entries,
+                    browse?.queued,
                     activeRingName = p.rings.firstOrNull { it.ringId == p.activeRingId }?.name.orEmpty(),
                 )
             }
