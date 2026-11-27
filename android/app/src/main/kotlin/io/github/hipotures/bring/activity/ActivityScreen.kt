@@ -160,7 +160,14 @@ private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
                     color = c.text2,
                 )
                 shown.forEach {
-                    Text(it, style = Tm.text.code, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // The file name is what matters: let it wrap, and give the folder its own dimmer line.
+                    Column(Modifier.padding(top = TmDimens.space1)) {
+                        Text(it.substringAfterLast('/'), style = Tm.text.code, color = c.text)
+                        val dir = it.substringBeforeLast('/', "")
+                        if (dir.isNotEmpty()) {
+                            Text(dir, style = Tm.text.code, color = c.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
                 if (r.uploaded > shown.size && shown.isNotEmpty()) {
                     Text("… and ${r.uploaded - shown.size} more", style = Tm.text.code, color = c.text2)
