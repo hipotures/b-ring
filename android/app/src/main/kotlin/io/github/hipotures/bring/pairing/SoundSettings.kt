@@ -6,7 +6,7 @@ import io.github.hipotures.bring.ffi.SoundListenConfig
 
 /** Which bands "Listen" searches (the Ring picks one with `--sound-band`). */
 enum class SoundBands(val label: String) {
-    BOTH("Low + High"),
+    BOTH("Both"),
     LOW("Low"),
     HIGH("High"),
     CUSTOM("Custom"),
