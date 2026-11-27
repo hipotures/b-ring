@@ -23,6 +23,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.rememberDatePickerState
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
@@ -54,6 +65,10 @@ import themechanics.compose.TmTone
 /** Rounds shown at first, and added each time the list is scrolled to its end. */
 private const val PAGE = 50
 
+private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM yyyy")
+
+private fun SyncRound.localDay(): LocalDate = Instant.ofEpochMilli(endedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+
 /** Sync history: one record per round, newest first; tap a record for its files. */
 @Composable
 fun ActivityScreen(
@@ -65,7 +80,12 @@ fun ActivityScreen(
 ) {
     val c = Tm.colors
     var open by rememberSaveable { mutableStateOf<Long?>(null) }
-    var limit by rememberSaveable { mutableIntStateOf(PAGE) }
+    // The chosen day as an epoch day (local time zone); null = every day.
+    var day by rememberSaveable { mutableStateOf<Long?>(null) }
+    var picking by rememberSaveable { mutableStateOf(false) }
+    var limit by rememberSaveable(day) { mutableIntStateOf(PAGE) }
+    val days = remember(rounds) { rounds.mapTo(HashSet()) { it.localDay() } }
+    val shown = remember(rounds, day) { day?.let { d -> rounds.filter { it.localDay().toEpochDay() == d } } ?: rounds }
     val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
@@ -83,11 +103,41 @@ fun ActivityScreen(
                     if (lastChecked > 0) formatWhen(lastChecked) else "never",
                     style = Tm.text.numeric,
                     color = c.text,
+                    modifier = Modifier.weight(1f),
                 )
+                val chosen = day
+                if (chosen != null) {
+                    Text(
+                        LocalDate.ofEpochDay(chosen).format(DAY_LABEL),
+                        style = Tm.text.numeric,
+                        color = c.link,
+                        modifier = Modifier.clickable { picking = !picking },
+                    )
+                    Icon(
+                        Icons.Outlined.Close,
+                        "Show all days",
+                        Modifier.clickable { day = null; picking = false }.size(TmDimens.iconLg),
+                        tint = c.link,
+                    )
+                } else if (days.isNotEmpty()) {
+                    Icon(
+                        Icons.Outlined.DateRange,
+                        "Pick a day",
+                        Modifier.clickable { picking = !picking }.size(TmDimens.iconLg),
+                        tint = c.link,
+                    )
+                }
+            }
+            if (picking && days.isNotEmpty()) {
+                RoundCalendar(days, day) { day = it; picking = false }
             }
             HorizontalDivider(thickness = TmDimens.bw2, color = c.line2)
         }
-        if (rounds.isEmpty()) {
+        if (shown.isEmpty() && day != null) {
+            item {
+                Text("Nothing was synced on this day.", style = MaterialTheme.typography.bodyMedium, color = c.text2, modifier = Modifier.padding(TmDimens.regionPad))
+            }
+        } else if (rounds.isEmpty()) {
             item {
                 Text(
                     "Rounds that upload or receive something show up here. Background checks that find nothing new are not listed.",
@@ -97,12 +147,12 @@ fun ActivityScreen(
                 )
             }
         }
-        items(rounds.take(limit), key = { it.endedAt }) { r ->
+        items(shown.take(limit), key = { it.endedAt }) { r ->
             RoundRow(r, expanded = open == r.endedAt) { open = if (open == r.endedAt) null else r.endedAt }
             RowDivider()
         }
         // Reached only by scrolling to the end of what is shown: pull in the next page.
-        if (rounds.size > limit) {
+        if (shown.size > limit) {
             item(key = "more") { LaunchedEffect(limit) { limit += PAGE } }
         }
     }
@@ -268,5 +318,35 @@ private fun FileNames(shown: List<String>, total: Int) {
     }
     if (total > shown.size && shown.isNotEmpty()) {
         Text("… and ${total - shown.size} more", style = Tm.text.code, color = c.text2)
+    }
+}
+
+/** A month calendar of [days] (the days that have rounds); every other day is greyed out and cannot be picked. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoundCalendar(days: Set<LocalDate>, selected: Long?, onPick: (Long) -> Unit) {
+    val first = days.min()
+    val last = days.max()
+    val selectable = remember(days) {
+        object : SelectableDates {
+            // The picker speaks UTC midnights; `days` are local dates.
+            override fun isSelectableDate(utcTimeMillis: Long) =
+                Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate() in days
+
+            override fun isSelectableYear(year: Int) = year in first.year..last.year
+        }
+    }
+    fun utc(d: LocalDate) = d.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = selected?.let { utc(LocalDate.ofEpochDay(it)) },
+        initialDisplayedMonthMillis = utc(selected?.let(LocalDate::ofEpochDay) ?: last),
+        yearRange = first.year..last.year,
+        selectableDates = selectable,
+    )
+    DatePicker(state, title = null, headline = null, showModeToggle = false)
+    LaunchedEffect(state.selectedDateMillis) {
+        val picked = state.selectedDateMillis ?: return@LaunchedEffect
+        val d = Instant.ofEpochMilli(picked).atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
+        if (d != selected) onPick(d)
     }
 }
