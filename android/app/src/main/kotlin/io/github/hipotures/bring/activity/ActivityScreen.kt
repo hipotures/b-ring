@@ -140,7 +140,7 @@ fun ActivityScreen(
         } else if (rounds.isEmpty()) {
             item {
                 Text(
-                    "Rounds that upload or receive something show up here. Background checks that find nothing new are not listed.",
+                    "Rounds that upload or receive something show up here. Checks that find nothing new are not listed; see Last check above.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.text2,
                     modifier = Modifier.padding(TmDimens.regionPad),

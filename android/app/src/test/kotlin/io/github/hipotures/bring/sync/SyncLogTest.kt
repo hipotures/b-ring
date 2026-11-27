@@ -26,18 +26,18 @@ class SyncLogTest {
     }
 
     @Test
-    fun keepsChangedOrManualRoundsNewestFirstAndPersists() {
+    fun keepsOnlyRoundsWithSomethingToShowNewestFirstAndPersists() {
         val dir = Files.createTempDirectory("synclog").toFile()
         try {
             val file = dir.resolve("log.tsv")
             val log = SyncLog(file, keep = 2)
             log.add(round(uploaded = 1, at = 1))
             log.add(round(at = 2)) // idle background check: not listed
-            log.add(round(manual = true, at = 3))
+            log.add(round(manual = true, at = 3)) // idle manual check: not listed either
             log.add(round(error = "x", at = 4))
-            assertEquals(listOf(4L, 3L), log.rounds.value.map { it.endedAt })
+            assertEquals(listOf(4L, 1L), log.rounds.value.map { it.endedAt })
             assertEquals(4L, log.lastChecked.value)
-            assertEquals(listOf(4L, 3L), SyncLog(file).rounds.value.map { it.endedAt })
+            assertEquals(listOf(4L, 1L), SyncLog(file).rounds.value.map { it.endedAt })
         } finally {
             dir.deleteRecursively()
         }
@@ -50,5 +50,22 @@ class SyncLogTest {
         assertEquals("Ring unreachable", roundDetail(round(error = "Ring unreachable")))
         assertEquals("Nothing new", roundTitle(round()))
         assertEquals("", roundDetail(round()))
+    }
+
+    @Test
+    fun dropsIdleManualRoundsSavedByOlderVersions() {
+        val dir = Files.createTempDirectory("synclog").toFile()
+        try {
+            val file = dir.resolve("log.tsv")
+            file.writeText(
+                listOf(round(manual = true, at = 3), round(uploaded = 1, at = 2), round(manual = true, at = 1))
+                    .joinToString("\n", transform = SyncRound::encode),
+            )
+            assertEquals(listOf(2L), SyncLog(file).rounds.value.map { it.endedAt })
+            // The file itself was cleaned, not just the view of it.
+            assertEquals(1, file.readLines().size)
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 }

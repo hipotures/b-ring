@@ -77,11 +77,11 @@ data class SyncRound(
 
 /**
  * The last [keep] rounds, newest first, persisted as one line per round in
- * [file]. Rounds that found nothing are kept only when started by hand, so
- * the 15-minute background checks do not push real activity out.
+ * [file]. Rounds that found nothing are never kept, whoever started them; they
+ * only move [lastChecked].
  */
 class SyncLog(private val file: File, private val keep: Int = 500) {
-    private val _rounds = MutableStateFlow(read())
+    private val _rounds = MutableStateFlow(load())
     val rounds: StateFlow<List<SyncRound>> = _rounds.asStateFlow()
 
     private val checkedFile = File(file.path + ".checked")
@@ -99,17 +99,26 @@ class SyncLog(private val file: File, private val keep: Int = 500) {
     fun add(round: SyncRound) {
         _lastChecked.value = round.endedAt
         runCatching { checkedFile.writeText(round.endedAt.toString()) }
-        if (!round.changed && !round.manual) return
+        if (!round.changed) return
         val next = (listOf(round) + _rounds.value).take(keep)
         _rounds.value = next
+        write(next)
+    }
+
+    private fun write(rounds: List<SyncRound>) {
         runCatching {
             file.parentFile?.mkdirs()
             val tmp = File(file.path + ".tmp")
-            tmp.writeText(next.joinToString("\n", transform = SyncRound::encode))
+            tmp.writeText(rounds.joinToString("\n", transform = SyncRound::encode))
             tmp.renameTo(file)
         }
     }
 
-    private fun read(): List<SyncRound> =
-        runCatching { file.readLines().mapNotNull(SyncRound::decode) }.getOrDefault(emptyList())
+    /** The saved rounds; older versions also kept idle manual ones, which are dropped (and the file rewritten once). */
+    private fun load(): List<SyncRound> {
+        val all = runCatching { file.readLines().mapNotNull(SyncRound::decode) }.getOrDefault(emptyList())
+        val kept = all.filter { it.changed }
+        if (kept.size != all.size) write(kept)
+        return kept
+    }
 }
