@@ -1,6 +1,5 @@
 package io.github.hipotures.bring.browser
 
-import io.github.hipotures.bring.ffi.DirPage
 import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.EntryState
 import io.github.hipotures.bring.ffi.FolderSummary
@@ -8,33 +7,27 @@ import io.github.hipotures.bring.ffi.QueuedSummary
 import io.github.hipotures.bring.ffi.StateCounts
 
 /**
- * What the browser shows: one folder of one Ring, read from the index
- * (never the whole index). [files] holds the first [limit] files directly in
- * [dir]; [total] is how many there are.
+ * What the browser shows: one folder of one Ring, read from the index (never the whole
+ * index) and filled in step by step, so the screen is up at once and the numbers arrive as
+ * their queries finish. [foldersReady] / [filesReady] say whether the lists are loaded;
+ * [counts] and [queued] are null until read. [files] holds the first [limit] files directly
+ * in [dir]; [total] is how many there are.
  */
 data class Browse(
     val ringId: String,
     val dir: String,
     val state: EntryState?,
     val limit: Int,
-    val folders: List<FolderSummary>,
-    val files: List<Entry>,
-    val total: Long,
+    val folders: List<FolderSummary> = emptyList(),
+    val foldersReady: Boolean = false,
+    val files: List<Entry> = emptyList(),
+    val total: Long = 0,
+    val filesReady: Boolean = false,
     /** Counts under [dir] (subfolders included) per state, whatever [state] is. */
-    val counts: StateCounts,
-    val queued: QueuedSummary,
+    val counts: StateCounts? = null,
+    val queued: QueuedSummary? = null,
 ) {
-    companion object {
-        fun of(
-            ringId: String,
-            dir: String,
-            state: EntryState?,
-            limit: Int,
-            page: DirPage,
-            counts: StateCounts,
-            queued: QueuedSummary,
-        ) = Browse(ringId, dir, state, limit, page.folders, page.files, page.totalFiles.toLong(), counts, queued)
-    }
+    val ready: Boolean get() = foldersReady && filesReady
 }
 
 /**

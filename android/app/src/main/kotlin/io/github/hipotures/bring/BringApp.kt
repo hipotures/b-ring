@@ -89,6 +89,9 @@ class BringApp : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        // Open the index (native library, migrations, runtime) while the first frame is drawn,
+        // so the Rings are ready sooner. Errors surface later, where the index is used.
+        Thread({ runCatching { if (prefs.demoMode.value) demoMoon() ?: moon else moon } }, "moon-warmup").start()
         getSystemService(NotificationManager::class.java)?.cancelAll()
         Notifications.createChannel(this)
     }

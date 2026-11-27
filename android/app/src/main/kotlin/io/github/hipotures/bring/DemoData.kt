@@ -111,7 +111,7 @@ object DemoData {
         )
         val pending = all.filter { it.uploadPending }
         return Browse(
-            ringId, dir, state, limit, folders, files.take(limit), files.size.toLong(), counts,
+            ringId, dir, state, limit, folders, true, files.take(limit), files.size.toLong(), true, counts,
             QueuedSummary(pending.size.toULong(), pending.sumOf { it.size.toLong() }.toULong()),
         )
     }

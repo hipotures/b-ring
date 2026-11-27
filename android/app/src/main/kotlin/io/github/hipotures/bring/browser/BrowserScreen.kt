@@ -109,7 +109,8 @@ fun BrowserScreen(
     LaunchedEffect(dir, filter, limit) { onShow(dir, filter.state, limit) }
     val counts = browse?.counts
     val files = browse?.files.orEmpty()
-    val moreFiles = browse != null && files.size < browse.total
+    val ready = browse?.ready == true
+    val moreFiles = browse != null && ready && files.size < browse.total
     val rows = remember(browse, dir, filter, watchedFolders) {
         if (browse == null) {
             emptyList()
@@ -144,12 +145,15 @@ fun BrowserScreen(
                 label = { it.label },
                 sub = { f ->
                     val c = counts
-                    "${when (f.state) {
-                        null -> c?.all ?: 0UL
-                        EntryState.LOCAL_ONLY -> c?.localOnly ?: 0UL
-                        EntryState.SYNCED -> c?.synced ?: 0UL
-                        EntryState.REMOTE_ONLY -> c?.remoteOnly ?: 0UL
-                    }}"
+                    when {
+                        c == null -> "…"
+                        else -> "${when (f.state) {
+                            null -> c.all
+                            EntryState.LOCAL_ONLY -> c.localOnly
+                            EntryState.SYNCED -> c.synced
+                            EntryState.REMOTE_ONLY -> c.remoteOnly
+                        }}"
+                    }
                 },
                 modifier = Modifier.padding(horizontal = TmDimens.panelPad, vertical = TmDimens.space2),
             )
@@ -163,6 +167,7 @@ fun BrowserScreen(
             item {
                 Text(
                     when {
+                        !ready -> "Loading…"
                         filter.state != null -> "No ${filter.label.lowercase()} files in this folder."
                         dir.isNotEmpty() -> "This folder is empty. Files added here will sync automatically."
                         dir.isEmpty() && counts?.all == 0UL -> "Nothing here yet. Files appear as they are synced."

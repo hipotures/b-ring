@@ -167,6 +167,14 @@ pub struct DirPage {
     pub total_files: u64,
 }
 
+/// A page of the files directly in a folder.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilesPage {
+    pub files: Vec<Entry>,
+    /// All files directly in the folder (for the state filter asked), not just this page.
+    pub total_files: u64,
+}
+
 /// File counts under a folder (subfolders included) per state.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct StateCounts {
@@ -405,6 +413,16 @@ impl Moon {
             .await;
             matches!(resp, Ok(Ok(h)) if h.ring_id == expected)
         }))
+    }
+}
+
+/// The `dir_stats` columns that count and size the files in `state` (all states when `None`).
+fn state_columns(state: Option<EntryState>) -> (&'static str, &'static str) {
+    match state {
+        None => ("n_local + n_synced + n_remote", "b_local + b_synced + b_remote"),
+        Some(EntryState::LocalOnly) => ("n_local", "b_local"),
+        Some(EntryState::Synced) => ("n_synced", "b_synced"),
+        Some(EntryState::RemoteOnly) => ("n_remote", "b_remote"),
     }
 }
 
@@ -948,11 +966,7 @@ impl Moon {
         self.entries_for(ring.ring_id_hex(), prefix)
     }
 
-    /// One folder of `ring_id` (`dir` is a Ring path such as `DCIM/2024`, `""` the root):
-    /// its subfolders with their totals, plus `limit` of the files directly in it from
-    /// `offset`, newest first. `state` keeps only files in that state, and only folders
-    /// that contain some. Reads the small per-folder table and one index range, never
-    /// every entry.
+    /// One folder of `ring_id` in a single call: [`Self::folders_for`] plus [`Self::files_for`].
     pub fn browse_dir_for(
         &self,
         ring_id: String,
@@ -961,57 +975,81 @@ impl Moon {
         offset: u32,
         limit: u32,
     ) -> Result<DirPage, MoonError> {
+        let folders = self.folders_for(ring_id.clone(), dir.clone(), state)?;
+        let page = self.files_for(ring_id, dir, state, offset, limit)?;
+        Ok(DirPage { folders, files: page.files, total_files: page.total_files })
+    }
+
+    /// The subfolders of `dir` (a Ring path such as `DCIM/2024`, `""` the root) with the totals
+    /// of everything beneath them. `state` keeps only files in that state, and only folders
+    /// that contain some. Reads the small per-folder table, never the entries.
+    pub fn folders_for(
+        &self,
+        ring_id: String,
+        dir: String,
+        state: Option<EntryState>,
+    ) -> Result<Vec<FolderSummary>, MoonError> {
         let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
-            return Ok(DirPage { folders: Vec::new(), files: Vec::new(), total_files: 0 });
+            return Ok(Vec::new());
         };
         let (prefix, upper) = dir_bounds(&dir);
-        let (count, bytes) = match state {
-            None => ("n_local + n_synced + n_remote", "b_local + b_synced + b_remote"),
-            Some(EntryState::LocalOnly) => ("n_local", "b_local"),
-            Some(EntryState::Synced) => ("n_synced", "b_synced"),
-            Some(EntryState::RemoteOnly) => ("n_remote", "b_remote"),
+        let (count, bytes) = state_columns(state);
+        let db = self.db();
+        let mut stmt = db.prepare(&format!(
+            "SELECT seg, SUM(c), SUM(b) FROM (
+               SELECT substr(rest, 1, instr(rest, '/') - 1) AS seg, {count} AS c, {bytes} AS b
+               FROM (SELECT substr(dir, ?2) AS rest, n_local, n_synced, n_remote,
+                            b_local, b_synced, b_remote
+                     FROM dir_stats
+                     WHERE ring_id = ?1 AND dir > ?3 AND (?4 IS NULL OR dir < ?4)))
+             GROUP BY seg HAVING SUM(c) > 0 ORDER BY seg COLLATE NOCASE"
+        ))?;
+        let start = prefix.chars().count() as i64 + 1;
+        let folders = stmt
+            .query_map(params![ring.id, start, prefix, upper], |r| {
+                let name: String = r.get(0)?;
+                Ok(FolderSummary {
+                    path: format!("{prefix}{name}"),
+                    name,
+                    files: r.get::<_, i64>(1)?.max(0) as u64,
+                    bytes: r.get::<_, i64>(2)?.max(0) as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(folders)
+    }
+
+    /// `limit` of the files directly in `dir`, from `offset`, newest first, with how many there
+    /// are (for the `state` asked). The files come from one index range.
+    pub fn files_for(
+        &self,
+        ring_id: String,
+        dir: String,
+        state: Option<EntryState>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<FilesPage, MoonError> {
+        let Some(ring) = store::ring_by_hex(&self.db(), &ring_id)? else {
+            return Ok(FilesPage { files: Vec::new(), total_files: 0 });
         };
+        let (prefix, _) = dir_bounds(&dir);
+        let (count, _) = state_columns(state);
         let state_sql: Option<&str> = state.map(|s| match s {
             EntryState::LocalOnly => "local-only",
             EntryState::Synced => "synced",
             EntryState::RemoteOnly => "remote-only",
         });
-        let (folders, total_files) = {
-            let db = self.db();
-            let mut stmt = db.prepare(&format!(
-                "SELECT seg, SUM(c), SUM(b) FROM (
-                   SELECT substr(rest, 1, instr(rest, '/') - 1) AS seg, {count} AS c, {bytes} AS b
-                   FROM (SELECT substr(dir, ?2) AS rest, n_local, n_synced, n_remote,
-                                b_local, b_synced, b_remote
-                         FROM dir_stats
-                         WHERE ring_id = ?1 AND dir > ?3 AND (?4 IS NULL OR dir < ?4)))
-                 GROUP BY seg HAVING SUM(c) > 0 ORDER BY seg COLLATE NOCASE"
-            ))?;
-            let start = prefix.chars().count() as i64 + 1;
-            let folders = stmt
-                .query_map(params![ring.id, start, prefix, upper], |r| {
-                    let name: String = r.get(0)?;
-                    Ok(FolderSummary {
-                        path: format!("{prefix}{name}"),
-                        name,
-                        files: r.get::<_, i64>(1)?.max(0) as u64,
-                        bytes: r.get::<_, i64>(2)?.max(0) as u64,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            let total: i64 = db.query_row(
-                &format!("SELECT COALESCE(SUM({count}), 0) FROM dir_stats WHERE ring_id = ?1 AND dir = ?2"),
-                params![ring.id, prefix],
-                |r| r.get(0),
-            )?;
-            (folders, total.max(0) as u64)
-        };
+        let total: i64 = self.db().query_row(
+            &format!("SELECT COALESCE(SUM({count}), 0) FROM dir_stats WHERE ring_id = ?1 AND dir = ?2"),
+            params![ring.id, prefix],
+            |r| r.get(0),
+        )?;
         let files = self.query_entries_tail(
             "e.ring_id = ?1 AND e.dir = ?2 AND e.suppressed = 0 AND (?3 IS NULL OR e.state = ?3)",
             "ORDER BY e.mtime_ns DESC, e.ring_path LIMIT ?4 OFFSET ?5",
             &[&ring.id, &prefix, &state_sql, &limit, &offset],
         )?;
-        Ok(DirPage { folders, files, total_files })
+        Ok(FilesPage { files, total_files: total.max(0) as u64 })
     }
 
     /// File counts per state under `dir` of `ring_id`, subfolders included.

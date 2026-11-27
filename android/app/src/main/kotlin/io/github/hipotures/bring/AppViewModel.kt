@@ -116,42 +116,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reloadBrowse(withQueue = false)
     }
 
-    /** Re-reads what the browser last asked for, e.g. after a sync changed the index. */
+    /**
+     * Re-reads what the browser last asked for, e.g. after a sync changed the index. The screen
+     * gets the folder at once and each part as its query finishes: the folders, then the files,
+     * then the counts and the queue. A folder already shown is kept while it refreshes, and
+     * paging only fetches the files not shown yet.
+     */
     private fun reloadBrowse(withQueue: Boolean = true) {
         val id = activeRingId() ?: return
         val w = want
         val requested = SystemClock.elapsedRealtime()
         browseJob?.cancel()
         browseJob = viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching { queryBrowse(id, w, requested, withQueue) }.getOrNull() ?: return@launch
-            ensureActive()
-            if (activeRingId() == id) {
-                _browse.value = result
-                Log.d(BROWSE_TAG, "published after ${SystemClock.elapsedRealtime() - requested} ms since the request")
+            val prev = _browse.value?.takeIf { it.ringId == id }
+            val sameDir = prev != null && prev.dir == w.dir
+            val same = sameDir && prev!!.state == w.state && prev.ready
+            // Anything else starts empty (but keeps what does not depend on the filter).
+            var cur = if (same) prev!!.copy(limit = w.limit) else Browse(
+                id, w.dir, w.state, w.limit,
+                counts = prev?.counts?.takeIf { sameDir },
+                queued = prev?.queued,
+            )
+            fun publish(b: Browse, step: String) {
+                ensureActive()
+                if (activeRingId() != id) return
+                cur = b
+                _browse.value = b
+                Log.d(BROWSE_TAG, "dir='${w.dir}' state=${w.state}: $step at +${SystemClock.elapsedRealtime() - requested} ms")
+            }
+            if (!same) publish(cur, "shown (loading)")
+
+            val moon = if (isDemo()) bring.demoMoon() else bring.moon
+            if (moon == null) {
+                publish(DemoData.browse(id, w.dir, w.state, w.limit), "sample data")
+                return@launch
+            }
+            val keep = same && !withQueue
+            if (!keep || !cur.foldersReady) {
+                publish(cur.copy(folders = moon.foldersFor(id, w.dir, w.state), foldersReady = true), "folders")
+            }
+            val have = if (keep) cur.files.size else 0
+            if (!keep || !cur.filesReady || have < w.limit) {
+                val page = moon.filesFor(id, w.dir, w.state, have.toUInt(), (w.limit - have).coerceAtLeast(0).toUInt())
+                publish(
+                    cur.copy(files = (if (keep) cur.files else emptyList()) + page.files, total = page.totalFiles.toLong(), filesReady = true),
+                    "files (${page.files.size}/${page.totalFiles})",
+                )
+            }
+            if (withQueue || !sameDir || cur.counts == null) {
+                publish(cur.copy(counts = moon.dirCountsFor(id, w.dir)), "counts")
+            }
+            // The queue belongs to the Ring, not the folder; read it after a sync or a Ring change.
+            if (withQueue || cur.queued == null) {
+                publish(cur.copy(queued = moon.queuedFor(id)), "queued")
             }
         }
-    }
-
-    /** Each step's time goes to logcat (tag `BringBrowse`) to find what makes a folder slow to open. */
-    private fun queryBrowse(id: String, w: Want, requested: Long, withQueue: Boolean): Browse {
-        val moon = if (isDemo()) bring.demoMoon() else bring.moon
-        if (moon == null) return DemoData.browse(id, w.dir, w.state, w.limit)
-        val t0 = SystemClock.elapsedRealtime()
-        val page = moon.browseDirFor(id, w.dir, w.state, 0u, w.limit.toUInt())
-        val t1 = SystemClock.elapsedRealtime()
-        val counts = moon.dirCountsFor(id, w.dir)
-        val t2 = SystemClock.elapsedRealtime()
-        // The queue belongs to the Ring, not the folder: it is read after a sync or a Ring
-        // change, not on every folder (it is the slowest of the three on a huge index).
-        val queued = _browse.value?.takeIf { !withQueue && it.ringId == id }?.queued ?: moon.queuedFor(id)
-        val t3 = SystemClock.elapsedRealtime()
-        Log.d(
-            BROWSE_TAG,
-            "dir='${w.dir}' state=${w.state} limit=${w.limit}: waited ${t0 - requested} ms, " +
-                "browse ${t1 - t0} ms (${page.folders.size} folders, ${page.files.size}/${page.totalFiles} files), " +
-                "counts ${t2 - t1} ms, queued ${t3 - t2} ms",
-        )
-        return Browse.of(id, w.dir, w.state, w.limit, page, counts, queued)
     }
 
     data class StatusMessage(val text: String, val isError: Boolean = false)

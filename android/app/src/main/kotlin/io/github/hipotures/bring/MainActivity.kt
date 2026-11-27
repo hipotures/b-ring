@@ -90,7 +90,10 @@ private fun App(openActivity: MutableStateFlow<Boolean>, vm: AppViewModel = view
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
     val pairing by vm.pairing.collectAsStateWithLifecycle()
     when (val p = pairing) {
-        AppViewModel.Pairing.Loading -> {}
+        // The shell is up at once; the Rings arrive when the index has opened.
+        AppViewModel.Pairing.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            androidx.compose.material3.CircularProgressIndicator()
+        }
         AppViewModel.Pairing.Unpaired -> PairingScreen(onPaired = vm::onPaired)
         is AppViewModel.Pairing.Paired -> Paired(p, vm, openActivity)
     }
