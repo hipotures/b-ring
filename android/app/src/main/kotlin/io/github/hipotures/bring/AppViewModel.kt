@@ -74,8 +74,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _pairing = MutableStateFlow<Pairing>(Pairing.Loading)
     val pairing: StateFlow<Pairing> = _pairing.asStateFlow()
 
-    val routes: StateFlow<Map<String, RouteStatus>> = combine(bring.prefs.demoMode, bring.routes) { demo, real ->
-        if (demo) DemoData.routes else real
+    /** Rings of the generated demo database (all shown as reachable over LAN). */
+    private val demoDbRings = MutableStateFlow<Set<String>>(emptySet())
+
+    val routes: StateFlow<Map<String, RouteStatus>> = combine(bring.prefs.demoMode, bring.routes, demoDbRings) { demo, real, db ->
+        if (demo) DemoData.routes + db.associateWith { RouteStatus.LAN } else real
     }.stateIn(viewModelScope, SharingStarted.Eagerly, if (bring.prefs.demoMode.value) DemoData.routes else bring.routes.value)
 
     /** Route status of the currently selected Ring. */
@@ -195,12 +198,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun refresh() {
-        if (isDemo()) {
-            val active = DemoData.RING_HOME_NAS
+    /**
+     * Demo data: the generated `demo.db` when it is on the phone (read through its own
+     * [Moon], like real data), otherwise the small hand-made [DemoData] sample.
+     */
+    private fun loadDemo(ringId: String?) {
+        val moon = bring.demoMoon()
+        if (moon == null) {
+            demoDbRings.value = emptySet()
+            val active = ringId ?: DemoData.RING_HOME_NAS
             _pairing.value = Pairing.Paired(DemoData.rings, active)
             _folders.value = DemoData.foldersFor(active)
             _entries.value = DemoData.entriesFor(active)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val rings = runCatching { moon.rings() }.getOrDefault(emptyList())
+            if (rings.isEmpty()) return@launch
+            val active = ringId?.takeIf { id -> rings.any { it.ringId == id } } ?: rings.first().ringId
+            val folders = runCatching { moon.watchedFoldersFor(active) }.getOrDefault(emptyList())
+            val entries = runCatching { moon.entriesFor(active, null) }.getOrDefault(emptyList())
+            if (!isDemo()) return@launch
+            demoDbRings.value = rings.mapTo(HashSet()) { it.ringId }
+            _pairing.value = Pairing.Paired(rings, active)
+            _folders.value = folders
+            _entries.value = entries.filterNot { it.suppressed }
+        }
+    }
+
+    fun refresh() {
+        if (isDemo()) {
+            loadDemo(null)
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -242,8 +270,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _pairing.value = current.copy(activeRingId = ringId)
             _verify.value = VerifyState.Idle
             _message.value = null
-            _folders.value = DemoData.foldersFor(ringId)
-            _entries.value = DemoData.entriesFor(ringId)
+            loadDemo(ringId)
             return
         }
         bring.prefs.selectedRingId = ringId

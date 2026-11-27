@@ -61,6 +61,20 @@ class BringApp : Application(), SingletonImageLoader.Factory {
         }
     }
 
+    @Volatile private var demoDb: Moon? = null
+
+    /**
+     * The generated large demo database (`dist/gen-demo-db.py`, pushed to
+     * `files/demo.db`), or null when it is not on the phone. Always a separate
+     * file from [moon], so the real index is never touched. Re-checked on each
+     * call until it exists, so it can be pushed while the app is running.
+     */
+    fun demoMoon(): Moon? = demoDb ?: synchronized(this) {
+        demoDb ?: filesDir.resolve("demo.db").takeIf { it.isFile }
+            ?.let { f -> runCatching { Moon.open(f.path) }.getOrNull() }
+            ?.also { demoDb = it }
+    }
+
     override fun onCreate() {
         super.onCreate()
         getSystemService(NotificationManager::class.java)?.cancelAll()

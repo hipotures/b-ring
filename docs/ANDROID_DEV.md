@@ -191,3 +191,22 @@ $ADB -s "$SERIAL" shell cmd jobscheduler run -f -u 0 -n androidx.work.systemjobs
 **Workaround:** go to Settings → Apps → B-Ring → Battery and pick **Unrestricted**. If the app is already frozen, the setting takes effect only after the next unfreeze (opening the app or a forced job run). After that the log shows `FreecessHandler: stop trying to freeze io.github.hipotures.bring`, and the media trigger fires within about 10 s of a file being saved (confirmed on the S23).
 
 "Optimised" is the default after a fresh install, so the problem comes back after reinstalling and for new users. Possible code fix: drop the network constraint from the media and periodic requests and check unmetered Wi‑Fi inside `SyncWorker` (a running job unfreezes the app and gets network), and/or ask for the battery-optimisation exemption when pairing.
+
+## Demo database (large fake index for load testing)
+
+Demo mode normally shows a small hand-made sample (`DemoData.kt`). If a generated
+`files/demo.db` is on the phone, Demo mode reads it through its own `Moon`
+instead, so the real `moon.db` (and its backups) is never touched.
+
+```sh
+dist/gen-demo-db.py                  # 1,000,000 entries -> ./demo.db (gitignored)
+dist/gen-demo-db.py -n 10000000 -o /tmp/demo10m.db
+dist/push-demo-db.sh demo.db 192.168.2.100:5555   # debug build only (run-as)
+```
+
+The generator applies the real migrations from `crates/bring-core/src/db/moon/`
+(order taken from `db/mod.rs`), so schema changes need no change there; only its
+`INSERT`s may need updating. Ring counters are derived from the generated rows.
+Remove the file (`run-as ... rm files/demo.db`) to get the hand-made sample back.
+Demo mode has no local files behind it: `local_path`s do not exist on the phone
+and sync/offload actions are disabled in Demo mode.
