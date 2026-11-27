@@ -64,15 +64,27 @@ class BringApp : Application(), SingletonImageLoader.Factory {
     @Volatile private var demoDb: Moon? = null
 
     /**
-     * The generated large demo database (`dist/gen-demo-db.py`, pushed to
-     * `files/demo.db`), or null when it is not on the phone. Always a separate
-     * file from [moon], so the real index is never touched. Re-checked on each
-     * call until it exists, so it can be pushed while the app is running.
+     * The generated large demo database (`dist/gen-demo-db.py`), or null when it is not on the
+     * phone. Always a separate file from [moon], so the real index is never touched. It is pushed to
+     * the app's external files dir (`/sdcard/Android/data/<package>/files/demo.db`, which adb
+     * can write even when the release build has no `run-as`) and copied into private storage
+     * when new or changed. Re-checked on each call until it exists, so it can be pushed while
+     * the app is running.
      */
     fun demoMoon(): Moon? = demoDb ?: synchronized(this) {
-        demoDb ?: filesDir.resolve("demo.db").takeIf { it.isFile }
-            ?.let { f -> runCatching { Moon.open(f.path) }.getOrNull() }
-            ?.also { demoDb = it }
+        demoDb ?: run {
+            val local = filesDir.resolve("demo.db")
+            val pushed = getExternalFilesDir(null)?.resolve("demo.db")?.takeIf { it.isFile }
+            if (pushed != null && (!local.isFile || local.length() != pushed.length() || local.lastModified() < pushed.lastModified())) {
+                runCatching {
+                    pushed.copyTo(File(local.path + ".tmp"), overwrite = true)
+                    File(local.path + ".tmp").renameTo(local)
+                }
+            }
+            local.takeIf { it.isFile }
+                ?.let { f -> runCatching { Moon.open(f.path) }.getOrNull() }
+                ?.also { demoDb = it }
+        }
     }
 
     override fun onCreate() {

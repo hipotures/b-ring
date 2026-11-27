@@ -210,3 +210,19 @@ The generator applies the real migrations from `crates/bring-core/src/db/moon/`
 Remove the file (`run-as ... rm files/demo.db`) to get the hand-made sample back.
 Demo mode has no local files behind it: `local_path`s do not exist on the phone
 and sync/offload actions are disabled in Demo mode.
+
+## Release and debug side by side
+
+`dist/install-android.sh [adb-target]` builds and installs both variants:
+
+| | package | label | notes |
+|---|---|---|---|
+| release | `io.github.hipotures.bring` | B-Ring | R8-minified, signed with the local debug keystore; upgrades in place, keeps real data; no `run-as` |
+| debug | `io.github.hipotures.bring.debug` | B-Ring dbg | own empty data; `run-as` works |
+
+Demo database: `dist/push-demo-db.sh` writes `demo.db` to
+`/sdcard/Android/data/<package>/files/` of both (the app copies it into private storage).
+The debug build has no Settings before pairing; to start it in Demo mode, write
+`shared_prefs/prefs.xml` with `demo_mode=true` via `run-as io.github.hipotures.bring.debug`.
+Speed comparisons: `adb shell dumpsys gfxinfo <package> reset`, do the same clicks in both,
+then `dumpsys gfxinfo <package>`.

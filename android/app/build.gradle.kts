@@ -50,6 +50,22 @@ android {
         ndk { abiFilters += abis }
     }
 
+    // Two builds side by side on one phone: `release` is the app (minified, R8) and keeps the
+    // original package, so it upgrades in place and keeps its data; `debug` installs next to it
+    // as io.github.hipotures.bring.debug ("B-Ring dbg") with its own data. Release is signed with
+    // the local debug keystore, which is enough for a private sideload.
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {

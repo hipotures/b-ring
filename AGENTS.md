@@ -8,7 +8,8 @@
 - See `docs/ANDROID_DEV.md` for full Wi-Fi ADB, logcat, and `moon.db` inspection commands.
 - Prefer **Wi-Fi ADB**: if the phone is not listed in `$ADB_BIN devices`, discover its current Wireless Debugging port via `$ADB_BIN mdns services` (matching `ADB_PHONE_IP` or `ADB_PHONE_SERIAL`) and connect with `$ADB_BIN connect <ip>:<port>`.
 - **Never run `adb kill-server`** unless explicitly asked (can disrupt USB passthrough).
-- Before installing an APK (`$ADB_BIN -s <target> install -r android/app/build/outputs/apk/debug/app-debug.apk`), check that no upload is active (`dumpsys notification --noredact` has no `NotificationRecord` for `io.github.hipotures.bring`, and `RING_DB` has no `open`/`committing` uploads).
+- Every build produces two variants, installed side by side: **release** (`io.github.hipotures.bring`, "B-Ring", minified, keeps the real data) and **debug** (`io.github.hipotures.bring.debug`, "B-Ring dbg", own data). Use `dist/install-android.sh [adb-target]` (add `--no-rust` when Rust crates did not change); it builds both and installs both. Compare speed between them, not against a single debug build.
+- Before installing (the script checks this), make sure no upload is active (`dumpsys notification --noredact` has no `NotificationRecord` for `io.github.hipotures.bring`, and `RING_DB` has no `open`/`committing` uploads).
 - Run Gradle with `--no-daemon --max-workers=1` (and add `-x cargoAndroid -x cargoHost` when Rust crates did not change) to keep RAM usage low on zero-swap machines.
 
 ## Ring daemon updates & versioning
