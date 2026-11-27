@@ -100,6 +100,13 @@ private fun App(openActivity: MutableStateFlow<Boolean>, vm: AppViewModel = view
 private fun Paired(p: AppViewModel.Pairing.Paired, vm: AppViewModel, openActivity: MutableStateFlow<Boolean>) {
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var dir by rememberSaveable { mutableStateOf("") }
+    // Real and Demo data are different trees: a folder open in one means nothing in the other.
+    val demo by LocalContext.current.bring.prefs.demoMode.collectAsStateWithLifecycle()
+    var lastDemo by rememberSaveable { mutableStateOf(demo) }
+    if (demo != lastDemo) {
+        lastDemo = demo
+        dir = ""
+    }
     var viewing by rememberSaveable { mutableStateOf<Long?>(null) }
     var pickingFolder by rememberSaveable { mutableStateOf(false) }
     val route by vm.route.collectAsStateWithLifecycle()
