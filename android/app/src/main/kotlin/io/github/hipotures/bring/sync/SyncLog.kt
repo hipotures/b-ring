@@ -24,7 +24,7 @@ data class SyncRound(
     /** Still queued for upload after the round. */
     val remaining: Int,
     val error: String?,
-    /** Ring paths uploaded in this round, most recent last (capped). */
+    /** The first [MAX_FILES] Ring paths uploaded in this round, in upload order. */
     val files: List<String>,
     /** Custom name of the Ring synced in this round (empty in older log entries). */
     val ringName: String = "",
@@ -34,7 +34,7 @@ data class SyncRound(
         get() = uploaded > 0 || received > 0 || found > 0 || offloaded > 0 || failed > 0 || error != null
 
     companion object {
-        const val MAX_FILES = 200
+        const val MAX_FILES = 3
         private const val SEP = '\t'
         private const val LIST_SEP = '\u001f'
 
@@ -77,7 +77,7 @@ data class SyncRound(
  * [file]. Rounds that found nothing are kept only when started by hand, so
  * the 15-minute background checks do not push real activity out.
  */
-class SyncLog(private val file: File, private val keep: Int = 100) {
+class SyncLog(private val file: File, private val keep: Int = 500) {
     private val _rounds = MutableStateFlow(read())
     val rounds: StateFlow<List<SyncRound>> = _rounds.asStateFlow()
 

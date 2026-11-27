@@ -133,7 +133,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     durationMs = SystemClock.elapsedRealtime() - started,
                     manual = trigger == Trigger.MANUAL,
                     route = route?.name ?: "",
-                    uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completed.size,
+                    uploaded = report?.let { (it.outbox.uploaded + it.outbox.deduplicated).toInt() } ?: progress.completedCount,
                     uploadedBytes = progress.completedBytes,
                     received = report?.index?.received?.toInt() ?: 0,
                     found = report?.let { (it.scan.newFiles + it.scan.changed).toInt() } ?: 0,
@@ -243,14 +243,17 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private var currentSent = 0L
         private var doneBytes = 0L
         private var files = 0
+        private var lastCompleted: String? = null
 
         @Volatile private var last: Notifications.Upload? = null
 
         /** The file being sent and the round's totals; null before the first one or once it is done. */
         fun snapshot(): Notifications.Upload? = last?.takeIf { it.sent < it.total }
 
-        /** Ring paths fully sent in this round (the last [SyncRound.MAX_FILES]). */
-        val completed = ArrayDeque<String>()
+        /** The first [SyncRound.MAX_FILES] Ring paths fully sent in this round. */
+        val completed = ArrayList<String>(SyncRound.MAX_FILES)
+        @Volatile var completedCount = 0
+            private set
         @Volatile var completedBytes = 0L
             private set
 
@@ -283,10 +286,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 files = files,
                 bytes = totalSent,
             )
-            if (sent >= total && completed.lastOrNull() != ringPath) {
-                completed.addLast(ringPath)
+            if (sent >= total && lastCompleted != ringPath) {
+                lastCompleted = ringPath
+                completedCount++
                 completedBytes += total
-                if (completed.size > SyncRound.MAX_FILES) completed.removeFirst()
+                if (completed.size < SyncRound.MAX_FILES) completed.add(ringPath)
             }
             val now = SystemClock.elapsedRealtime()
             if (now - lastAt < 1_000) return

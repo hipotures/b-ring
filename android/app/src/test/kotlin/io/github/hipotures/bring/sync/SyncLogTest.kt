@@ -47,6 +47,6 @@ class SyncLogTest {
         assertEquals("Sync failed", roundTitle(round(error = "Ring unreachable")))
         assertEquals("Ring unreachable", roundDetail(round(error = "Ring unreachable")))
         assertEquals("Nothing new", roundTitle(round()))
-        assertEquals("Everything is in sync", roundDetail(round()))
+        assertEquals("", roundDetail(round()))
     }
 }

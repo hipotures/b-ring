@@ -19,12 +19,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,6 +51,9 @@ import themechanics.compose.Tm
 import themechanics.compose.TmDimens
 import themechanics.compose.TmTone
 
+/** Rounds shown at first, and added each time the list is scrolled to its end. */
+private const val PAGE = 50
+
 /** Sync history: one record per round, newest first; tap a record for its files. */
 @Composable
 fun ActivityScreen(
@@ -55,6 +65,7 @@ fun ActivityScreen(
 ) {
     val c = Tm.colors
     var open by rememberSaveable { mutableStateOf<Long?>(null) }
+    var limit by rememberSaveable { mutableIntStateOf(PAGE) }
     val totals = remember(rings, entries) { TransferTotals.of(rings, entries) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = TmDimens.space6)) {
         item {
@@ -86,9 +97,13 @@ fun ActivityScreen(
                 )
             }
         }
-        items(rounds, key = { it.endedAt }) { r ->
+        items(rounds.take(limit), key = { it.endedAt }) { r ->
             RoundRow(r, expanded = open == r.endedAt) { open = if (open == r.endedAt) null else r.endedAt }
             RowDivider()
+        }
+        // Reached only by scrolling to the end of what is shown: pull in the next page.
+        if (rounds.size > limit) {
+            item(key = "more") { LaunchedEffect(limit) { limit += PAGE } }
         }
     }
 }
@@ -96,47 +111,59 @@ fun ActivityScreen(
 @Composable
 private fun RoundRow(r: SyncRound, expanded: Boolean, onToggle: () -> Unit) {
     val c = Tm.colors
+    val detail = roundDetail(r)
+    val shown = r.files.take(SyncRound.MAX_FILES)
     Column(
         Modifier
             .fillMaxWidth()
             .background(c.surface)
-            .clickable(enabled = r.files.isNotEmpty(), onClick = onToggle)
+            .clickable(onClick = onToggle)
             .padding(horizontal = TmDimens.regionPad, vertical = TmDimens.space3),
         verticalArrangement = Arrangement.spacedBy(TmDimens.space1),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TmDimens.space2)) {
-            Text(
-                roundTitle(r),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = c.text,
-                modifier = Modifier.weight(1f),
-            )
-            if (r.files.isNotEmpty()) {
-                Text(if (expanded) "Hide files" else "Show files", style = MaterialTheme.typography.labelMedium, color = c.link)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TmDimens.space1)) {
+                Text(
+                    roundTitle(r),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = c.text,
+                )
+                if (detail.isNotEmpty()) {
+                    Text(detail, style = MaterialTheme.typography.bodyMedium, color = if (r.error != null) c.danger else c.text2)
+                }
+                Text(
+                    // Wrap only between parts, never inside "Today 19:24".
+                    listOfNotNull(r.ringName.ifEmpty { null }, formatWhen(r.endedAt))
+                        .joinToString(" · ") { it.replace(' ', '\u00A0') },
+                    style = Tm.text.numeric,
+                    color = c.text2,
+                )
             }
             if (r.error != null) Tag("Failed", TmTone.Danger)
-        }
-        Text(roundDetail(r), style = MaterialTheme.typography.bodyMedium, color = if (r.error != null) c.danger else c.text2)
-        Text(
-                listOfNotNull(
-                    r.ringName.ifEmpty { null },
-                    formatWhen(r.endedAt),
-                    r.route.ifEmpty { null },
-                    if (r.manual) "manual" else "background",
-                    formatDuration(r.durationMs),
-                    // Wrap only between parts, never inside "0.5 s" or "Today 19:24".
-                ).joinToString(" · ") { it.replace(' ', '\u00A0') },
-                style = Tm.text.numeric,
-                color = c.text2,
+            Icon(
+                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                if (expanded) "Hide details" else "Show details",
+                Modifier.size(TmDimens.iconLg),
+                tint = c.link,
             )
+        }
         if (expanded) {
             Column(Modifier.padding(top = TmDimens.space1_5), verticalArrangement = Arrangement.spacedBy(TmDimens.space0_5)) {
-                r.files.asReversed().forEach {
+                Text(
+                    listOfNotNull(
+                        r.route.ifEmpty { null },
+                        if (r.manual) "manual" else "background",
+                        formatDuration(r.durationMs),
+                    ).joinToString(" · ") { it.replace(' ', '\u00A0') },
+                    style = Tm.text.numeric,
+                    color = c.text2,
+                )
+                shown.forEach {
                     Text(it, style = Tm.text.code, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (r.uploaded > r.files.size) {
-                    Text("… and ${r.uploaded - r.files.size} more", style = Tm.text.code, color = c.text2)
+                if (r.uploaded > shown.size && shown.isNotEmpty()) {
+                    Text("… and ${r.uploaded - shown.size} more", style = Tm.text.code, color = c.text2)
                 }
             }
         }
