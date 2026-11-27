@@ -11,6 +11,14 @@ import io.github.hipotures.bring.sync.SyncRound
  * Synthetic in-memory data shown when Demo mode is enabled in Settings.
  * Never touches `moon.db`, real Ring tokens or files on disk.
  */
+/** Number of synthetic files Demo mode generates for the active Ring. */
+enum class DemoScale(val label: String, val count: Int) {
+    SAMPLE("Sample", 0),
+    K10("10k", 10_000),
+    K100("100k", 100_000),
+    M1("1M", 1_000_000),
+}
+
 object DemoData {
     const val RING_HOME_NAS = "demo01a4f8c29e10b7d3e6a1c8402f9b"
     const val RING_WORKSTATION = "demo02b7e1d40a83f5c291e4b8a73d0c"
@@ -83,6 +91,63 @@ object DemoData {
         )
         else -> emptyList()
     }
+
+    /** The demo Rings; at a load-test [scale] the home Ring's counters match the generated files. */
+    fun ringsFor(scale: DemoScale): List<RingInfo> =
+        if (scale == DemoScale.SAMPLE) rings else rings.map {
+            if (it.ringId == RING_HOME_NAS) {
+                it.copy(transferredFiles = scale.count.toULong(), transferredBytes = scale.count.toULong() * 3UL * MIB)
+            } else it
+        }
+
+    private val MIMES = listOf(
+        "image/jpeg" to "jpg", "image/heic" to "heic", "video/mp4" to "mp4", "application/pdf" to "pdf",
+        "image/png" to "png", "audio/flac" to "flac", "text/plain" to "txt",
+    )
+    private val TOPS = listOf("pixel-9/Camera", "pixel-9/Screenshots", "pixel-9/Documents", "tablet/Books", "shared/Trips", "music", "projects", "backups")
+
+    /**
+     * [DemoScale.count] deterministic fake files in a realistic tree
+     * (top/year/month/NNNN), with a state mix of about 60% remote-only,
+     * 38% synced and 2% local-only. Real-sized Entry objects, so heap use is
+     * representative.
+     */
+    private fun generated(ringId: String, count: Int): List<Entry> {
+        val nowNs = System.currentTimeMillis() * 1_000_000L
+        val hex = "0123456789abcdef"
+        var seed = 0x9E3779B97F4A7C15uL.toLong()
+        fun next(): Long { seed = seed * 6364136223846793005L + 1442695040888963407L; return seed ushr 33 }
+        val out = ArrayList<Entry>(count)
+        for (i in 0 until count) {
+            val (mime, ext) = MIMES[(next() % MIMES.size).toInt()]
+            val top = TOPS[i % TOPS.size]
+            val path = "$top/${2020 + (i / 97) % 7}/${1 + (i / 13) % 12}/F${i.toString().padStart(7, '0')}.$ext"
+            val r = (next() % 100).toInt()
+            val state = when { r < 2 -> EntryState.LOCAL_ONLY; r < 40 -> EntryState.SYNCED; else -> EntryState.REMOTE_ONLY }
+            val h = CharArray(64) { hex[(next() and 15).toInt()] }
+            out += Entry(
+                id = 1_000_000L + i,
+                ringId = ringId,
+                ringPath = path,
+                localPath = if (state == EntryState.REMOTE_ONLY) null else "/storage/emulated/0/$path",
+                remoteFileId = if (state == EntryState.LOCAL_ONLY) null else 1_000_000L + i,
+                size = (next() % (50L * 1024 * 1024)).toULong(),
+                mtimeNs = nowNs - (next() % (4_000L * 3_600_000_000_000L)),
+                mime = mime,
+                blake3 = if (state == EntryState.LOCAL_ONLY) null else String(h),
+                thumb = null,
+                state = state,
+                suppressed = false,
+                uploadPending = state == EntryState.LOCAL_ONLY,
+                lastError = null,
+            )
+        }
+        return out
+    }
+
+    fun entriesFor(ringId: String, scale: DemoScale): List<Entry> =
+        if (scale == DemoScale.SAMPLE || ringId != RING_HOME_NAS) entriesFor(ringId)
+        else Perf.time("demo.generate ${scale.label}") { generated(ringId, scale.count) }
 
     fun entriesFor(ringId: String): List<Entry> {
         val nowNs = System.currentTimeMillis() * 1_000_000L

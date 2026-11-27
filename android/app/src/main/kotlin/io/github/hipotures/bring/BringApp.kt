@@ -63,6 +63,8 @@ class BringApp : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        Perf.init(filesDir)
+        Perf.enabled = prefs.demoMode.value
         getSystemService(NotificationManager::class.java)?.cancelAll()
         Notifications.createChannel(this)
     }

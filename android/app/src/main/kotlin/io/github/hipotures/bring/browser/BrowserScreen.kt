@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import io.github.hipotures.bring.Perf
 import io.github.hipotures.bring.ffi.Entry
 import io.github.hipotures.bring.ffi.EntryState
 import io.github.hipotures.bring.formatBytes
@@ -102,21 +103,25 @@ fun BrowserScreen(
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     // Counts cover this folder and its subfolders, like the list below.
     val here = remember(entries, dir) {
-        if (dir.isEmpty()) entries else entries.filter { it.ringPath.startsWith("$dir/") }
+        Perf.time("browser.here n=${entries.size}") {
+            if (dir.isEmpty()) entries else entries.filter { it.ringPath.startsWith("$dir/") }
+        }
     }
-    val counts = remember(here) { here.groupingBy { it.state }.eachCount() }
+    val counts = remember(here) { Perf.time("browser.counts") { here.groupingBy { it.state }.eachCount() } }
     val shown = remember(entries, filter) {
-        if (filter.state == null) entries else entries.filter { it.state == filter.state }
+        Perf.time("browser.shown") {
+            if (filter.state == null) entries else entries.filter { it.state == filter.state }
+        }
     }
     val rows = remember(shown, dir, filter, watchedFolders) {
-        listDir(
+        Perf.time("browser.listDir dir='$dir'") { listDir(
             shown,
             dir,
             { it.ringPath },
             { it.size.toLong() },
             newestFirst,
             extraFolders = if (filter == Filter.ALL) watchedFolders else emptyList(),
-        )
+        ) }
     }
     // Long-press starts selecting; a tap then toggles instead of opening.
     var selected by remember(dir) { mutableStateOf(emptySet<Long>()) }

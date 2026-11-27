@@ -38,6 +38,17 @@ class Prefs(context: Context) {
         _demoMode.value = enabled
     }
 
+    private val _demoScale = MutableStateFlow(
+        DemoScale.entries.firstOrNull { it.name == sp.getString(DEMO_SCALE, null) } ?: DemoScale.SAMPLE,
+    )
+    /** How many synthetic files Demo mode generates (load testing). */
+    val demoScale: StateFlow<DemoScale> = _demoScale.asStateFlow()
+
+    fun setDemoScale(scale: DemoScale) {
+        sp.edit { putString(DEMO_SCALE, scale.name) }
+        _demoScale.value = scale
+    }
+
     private val _sound = MutableStateFlow(loadSound())
     /** Advanced settings of "Listen" (sound pairing). */
     val sound: StateFlow<SoundSettings> = _sound.asStateFlow()
@@ -93,6 +104,7 @@ class Prefs(context: Context) {
         const val SELECTED_RING = "selected_ring_id"
         const val LAST_SHARE_FOLDER = "last_share_folder"
         const val DEMO_MODE = "demo_mode"
+        const val DEMO_SCALE = "demo_scale"
         const val SOUND_BANDS = "sound_bands"
         const val SOUND_CUSTOM_HZ = "sound_custom_hz"
         const val SOUND_DETECTION = "sound_detection"

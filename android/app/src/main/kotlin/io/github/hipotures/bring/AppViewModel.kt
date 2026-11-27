@@ -190,17 +190,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setDemoMode(enabled: Boolean) {
         bring.prefs.setDemoMode(enabled)
+        Perf.enabled = enabled
+        if (enabled) Perf.clear()
         _verify.value = VerifyState.Idle
         _message.value = null
         refresh()
     }
 
+    /** Picks how many synthetic files Demo mode generates (load test) and reloads. */
+    fun setDemoScale(scale: DemoScale) {
+        bring.prefs.setDemoScale(scale)
+        Perf.note("demo scale -> ${scale.label}")
+        refresh()
+    }
+
+    /** Builds the demo entries off the main thread; a too-large scale is reported, not fatal. */
+    private fun loadDemoEntries(ringId: String) {
+        val scale = bring.prefs.demoScale.value
+        _entries.value = emptyList()
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val list = DemoData.entriesFor(ringId, scale)
+                Perf.note("demo entries ready: ${list.size}")
+                _entries.value = list
+            } catch (e: OutOfMemoryError) {
+                Perf.note("demo.generate ${scale.label} FAILED: OutOfMemoryError")
+                _message.value = StatusMessage("Out of memory generating ${scale.label} demo files", isError = true)
+            }
+        }
+    }
+
     fun refresh() {
         if (isDemo()) {
             val active = DemoData.RING_HOME_NAS
-            _pairing.value = Pairing.Paired(DemoData.rings, active)
+            _pairing.value = Pairing.Paired(DemoData.ringsFor(bring.prefs.demoScale.value), active)
             _folders.value = DemoData.foldersFor(active)
-            _entries.value = DemoData.entriesFor(active)
+            loadDemoEntries(active)
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -243,7 +268,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _verify.value = VerifyState.Idle
             _message.value = null
             _folders.value = DemoData.foldersFor(ringId)
-            _entries.value = DemoData.entriesFor(ringId)
+            loadDemoEntries(ringId)
             return
         }
         bring.prefs.selectedRingId = ringId

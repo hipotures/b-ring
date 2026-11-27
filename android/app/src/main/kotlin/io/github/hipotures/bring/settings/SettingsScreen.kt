@@ -45,6 +45,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hipotures.bring.AppViewModel
+import io.github.hipotures.bring.DemoScale
 import io.github.hipotures.bring.bring
 import io.github.hipotures.bring.ffi.RingInfo
 import io.github.hipotures.bring.formatBytes
@@ -92,6 +93,7 @@ fun AppSettingsScreen(vm: AppViewModel) {
     val storage by vm.storageGranted.collectAsStateWithLifecycle()
     val theme by context.bring.prefs.theme.collectAsStateWithLifecycle()
     val demoMode by context.bring.prefs.demoMode.collectAsStateWithLifecycle()
+    val demoScale by context.bring.prefs.demoScale.collectAsStateWithLifecycle()
 
     Column(
         Modifier
@@ -124,6 +126,15 @@ fun AppSettingsScreen(vm: AppViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Tm.colors.text2,
             )
+            if (demoMode) {
+                Segmented(DemoScale.entries, demoScale, vm::setDemoScale, label = { it.label })
+                Text(
+                    "Number of fake files for the load test. Held in memory only, never written to the database. " +
+                        "Timings are logged to perf.log while Demo mode is on.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Tm.colors.text2,
+                )
+            }
         }
 
         if (remember { SoundListener.available(context) }) {
